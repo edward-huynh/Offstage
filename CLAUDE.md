@@ -219,7 +219,7 @@ Estimates assume one developer part-time.
 | Risk | Mitigation |
 |---|---|
 | macOS 15+ ScreenCaptureKit ignores `sharingType` | Test early, publish compatibility table, document single-window sharing |
-| Weak Vietnamese STT on small models | PhoWhisper option, optional cloud STT as a separate toggle |
+| Weak Vietnamese STT on small models | PhoWhisper-small q5_1 (converted from the official weights, reproducible with `spikes/stt-bench/convert-phowhisper.sh`) cut Vietnamese WER from 14.0% to 1.7% on synthetic speech, but it is Vietnamese-only and needs a place to host the converted file (see `docs/STT-EVAL.md`). Optional cloud STT stays a separate toggle |
 | High latency on CPU-only machines | Auto-pick smaller models, suggest a cloud provider |
 | Model licenses (e.g. Gemma terms) | Never bundle weights, show license at download |
 | Misuse and project reputation | README responsible-use section, promote legitimate use cases |
@@ -234,3 +234,5 @@ Estimates assume one developer part-time.
 | SQLite + sqlite-vec + FTS5 | Single file per workspace, no server, hybrid search catches names and terms |
 | Keys in OS keychain, calls from Rust only | Keys never reach the webview or disk |
 | Stub crates from day one | Clear boundaries, independent tests, reusable outside the app |
+| Whisper runs with timestamps off | The app only uses text. Timestamps cost decoding steps, and models fine-tuned without them (PhoWhisper) emit stray tokens when asked for them |
+| PhoWhisper is an optional model, not the default | It is Vietnamese-only and writes lowercase text without punctuation, so `small` stays the multilingual default. Question detection must rely on Vietnamese question words, not on `?` |
