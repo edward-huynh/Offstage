@@ -9,6 +9,17 @@ pub trait Vad: Send {
     fn probability(&mut self, window: &[f32]) -> f32;
 }
 
+/// Lets a detector be chosen at run time and still drive a `Segmenter`.
+impl Vad for Box<dyn Vad> {
+    fn window_size(&self) -> usize {
+        (**self).window_size()
+    }
+
+    fn probability(&mut self, window: &[f32]) -> f32 {
+        (**self).probability(window)
+    }
+}
+
 /// A light detector that calls a window speech when it is louder than a fixed level.
 ///
 /// It needs no model file and costs next to nothing, but it cannot tell speech from

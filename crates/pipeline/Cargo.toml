@@ -1,0 +1,12 @@
+[package]
+name = "offstage-pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+offstage-core.workspace = true
+offstage-audio = { path = "../audio" }
+offstage-stt = { path = "../stt" }
+serde.workspace = true
+thiserror.workspace = true
