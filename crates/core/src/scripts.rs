@@ -25,6 +25,9 @@ Cửa sổ được loại khỏi luồng chia sẻ màn hình, nên người xe
 const INDEX_FILE: &str = "index.json";
 const DEFAULT_TITLE: &str = "Kịch bản mới";
 const MAX_TITLE_CHARS: usize = 80;
+/// Characters of context shown before and after a match in a search result.
+const SNIPPET_BEFORE: usize = 36;
+const SNIPPET_AFTER: usize = 90;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScriptMeta {
@@ -32,6 +35,15 @@ pub struct ScriptMeta {
     pub title: String,
     /// Unix time in milliseconds.
     pub updated_at: u64,
+}
+
+/// A search result: the script, and where the words were found in its text when they were.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScriptHit {
+    pub id: String,
+    pub title: String,
+    /// A short stretch of the text around the first match, `None` when only the title matched.
+    pub snippet: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -154,6 +166,41 @@ impl ScriptStore {
         Ok(meta)
     }
 
+    /// Finds scripts whose title or text contains `query`, ignoring case and Vietnamese accents,
+    /// so "ngan gon" finds "ngắn gọn". Titles that match come first, then text-only matches, each
+    /// group newest first. An empty query finds nothing.
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<ScriptHit>> {
+        let (needle, _) = fold(query.trim());
+        if needle.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut in_title = Vec::new();
+        let mut in_text = Vec::new();
+        for meta in self.list()? {
+            // A missing text file only means no text to search, not a failed search.
+            let body = fs::read_to_string(self.body_path(&meta.id)).unwrap_or_default();
+            let snippet = snippet_for(&body, &needle);
+            let (title, _) = fold(&meta.title);
+            let title_match = find(&title, &needle).is_some();
+            if !title_match && snippet.is_none() {
+                continue;
+            }
+            let hit = ScriptHit {
+                id: meta.id,
+                title: meta.title,
+                snippet,
+            };
+            if title_match {
+                in_title.push(hit);
+            } else {
+                in_text.push(hit);
+            }
+        }
+        in_title.extend(in_text);
+        in_title.truncate(limit);
+        Ok(in_title)
+    }
+
     pub fn delete(&self, id: &str) -> Result<()> {
         let mut index = self.load_index()?;
         let pos = Self::position(&index, id)?;
@@ -192,6 +239,66 @@ pub fn title_for_import(file_stem: &str, content: &str) -> String {
         }
     }
     clean_title(file_stem)
+}
+
+/// Lowercases a letter and strips its Vietnamese accent. Returns `None` for a combining accent
+/// mark, which is dropped (so accents typed as separate marks are ignored too).
+fn fold_char(c: char) -> Option<char> {
+    if ('\u{0300}'..='\u{036f}').contains(&c) {
+        return None;
+    }
+    let lower = c.to_lowercase().next().unwrap_or(c);
+    Some(match lower {
+        'à' | 'á' | 'ạ' | 'ả' | 'ã' | 'â' | 'ầ' | 'ấ' | 'ậ' | 'ẩ' | 'ẫ' | 'ă' | 'ằ' | 'ắ' | 'ặ'
+        | 'ẳ' | 'ẵ' => 'a',
+        'è' | 'é' | 'ẹ' | 'ẻ' | 'ẽ' | 'ê' | 'ề' | 'ế' | 'ệ' | 'ể' | 'ễ' => 'e',
+        'ì' | 'í' | 'ị' | 'ỉ' | 'ĩ' => 'i',
+        'ò' | 'ó' | 'ọ' | 'ỏ' | 'õ' | 'ô' | 'ồ' | 'ố' | 'ộ' | 'ổ' | 'ỗ' | 'ơ' | 'ờ' | 'ớ' | 'ợ'
+        | 'ở' | 'ỡ' => 'o',
+        'ù' | 'ú' | 'ụ' | 'ủ' | 'ũ' | 'ư' | 'ừ' | 'ứ' | 'ự' | 'ử' | 'ữ' => 'u',
+        'ỳ' | 'ý' | 'ỵ' | 'ỷ' | 'ỹ' => 'y',
+        'đ' => 'd',
+        other => other,
+    })
+}
+
+/// The folded text, plus for each folded character the index of the character it came from,
+/// so a match can be mapped back to the original text.
+fn fold(text: &str) -> (Vec<char>, Vec<usize>) {
+    let mut folded = Vec::new();
+    let mut origin = Vec::new();
+    for (index, c) in text.chars().enumerate() {
+        if let Some(f) = fold_char(c) {
+            folded.push(f);
+            origin.push(index);
+        }
+    }
+    (folded, origin)
+}
+
+fn find(haystack: &[char], needle: &[char]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// A short, single-line stretch of `text` around the first match of `needle` (already folded).
+fn snippet_for(text: &str, needle: &[char]) -> Option<String> {
+    let (folded, origin) = fold(text);
+    let at = find(&folded, needle)?;
+    let chars: Vec<char> = text.chars().collect();
+    let start = origin[at];
+    let end = origin[at + needle.len() - 1] + 1;
+    let from = start.saturating_sub(SNIPPET_BEFORE);
+    let to = (end + SNIPPET_AFTER).min(chars.len());
+
+    let window: String = chars[from..to].iter().collect();
+    let mut snippet = window.split_whitespace().collect::<Vec<_>>().join(" ");
+    if from > 0 {
+        snippet.insert(0, '…');
+    }
+    if to < chars.len() {
+        snippet.push('…');
+    }
+    Some(snippet)
 }
 
 fn system_millis() -> u64 {
@@ -362,5 +469,181 @@ mod tests {
         assert_eq!(title_for_import("kich-ban", "Không có tiêu đề"), "kich-ban");
         assert_eq!(title_for_import("kich-ban", "#\ntext"), "kich-ban");
         assert_eq!(title_for_import("", "text"), DEFAULT_TITLE);
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    fn store(dir: &tempfile::TempDir) -> ScriptStore {
+        let next = AtomicU64::new(1000);
+        ScriptStore::with_clock(dir.path().join("scripts"), move || {
+            next.fetch_add(10, Ordering::SeqCst)
+        })
+    }
+
+    fn ids(hits: &[ScriptHit]) -> Vec<&str> {
+        hits.iter().map(|h| h.title.as_str()).collect()
+    }
+
+    #[test]
+    fn folding_ignores_case_and_vietnamese_accents() {
+        let folded = |s: &str| fold(s).0.into_iter().collect::<String>();
+        assert_eq!(folded("Ngắn GỌN"), "ngan gon");
+        assert_eq!(folded("Đường đi"), "duong di");
+        assert_eq!(
+            folded("Tiếng Việt: ưu tiên, ơi, ỳ"),
+            "tieng viet: uu tien, oi, y"
+        );
+        assert_eq!(folded("plain ascii 123"), "plain ascii 123");
+    }
+
+    #[test]
+    fn accents_typed_as_separate_marks_are_ignored_too() {
+        // "ngắn" written as n, g, a, breve, acute, n, with the marks as separate characters.
+        let decomposed = "nga\u{0306}\u{0301}n";
+        let (folded, origin) = fold(decomposed);
+        assert_eq!(folded.iter().collect::<String>(), "ngan");
+        // The last letter still points at its real position (index 5), after the two marks.
+        assert_eq!(origin, vec![0, 1, 2, 5]);
+    }
+
+    #[test]
+    fn a_title_match_is_found_without_caring_about_case() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        s.create("Bài Thuyết Trình", "nội dung khác").unwrap();
+        s.create("Ghi chú", "không liên quan").unwrap();
+
+        let hits = s.search("thuyết trình", 10).unwrap();
+        assert_eq!(ids(&hits), vec!["Bài Thuyết Trình"]);
+        // The text does not hold the words, so there is nothing to quote.
+        assert_eq!(hits[0].snippet, None);
+    }
+
+    #[test]
+    fn the_text_is_searched_and_quoted() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        s.create(
+            "Một",
+            "Xin chào mọi người. Hôm nay chúng ta nói về doanh thu quý ba.",
+        )
+        .unwrap();
+
+        let hits = s.search("doanh thu", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        let snippet = hits[0].snippet.as_deref().unwrap();
+        assert!(snippet.contains("doanh thu quý ba"), "{snippet}");
+    }
+
+    #[test]
+    fn typing_without_accents_finds_accented_text_and_the_other_way_round() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        s.create("Một", "Hãy trình bày ngắn gọn về kinh nghiệm")
+            .unwrap();
+
+        assert_eq!(s.search("ngan gon", 10).unwrap().len(), 1);
+        assert_eq!(s.search("ngắn gọn", 10).unwrap().len(), 1);
+        assert_eq!(s.search("KINH NGHIEM", 10).unwrap().len(), 1);
+        assert_eq!(s.search("nghiệm", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_long_text_is_quoted_with_ellipses_and_on_one_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        let body = format!(
+            "{}\n\nTừ khoá cần tìm\n\n{}",
+            "a ".repeat(60),
+            "b ".repeat(80)
+        );
+        s.create("Dài", &body).unwrap();
+
+        let snippet = s.search("khoá", 10).unwrap().remove(0).snippet.unwrap();
+        assert!(
+            snippet.starts_with('…') && snippet.ends_with('…'),
+            "{snippet}"
+        );
+        assert!(snippet.contains("Từ khoá cần tìm"));
+        assert!(!snippet.contains('\n'));
+        assert!(snippet.chars().count() < 160, "{}", snippet.chars().count());
+    }
+
+    #[test]
+    fn titles_that_match_come_before_text_only_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        // The text-only match is the newest, yet it still comes second.
+        s.create("Báo cáo quý", "không nhắc tới từ khoá").unwrap();
+        s.create("Ghi chú", "báo cáo nằm trong nội dung").unwrap();
+
+        let hits = s.search("báo cáo", 10).unwrap();
+        assert_eq!(ids(&hits), vec!["Báo cáo quý", "Ghi chú"]);
+    }
+
+    #[test]
+    fn within_a_group_the_newest_comes_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        s.create("Họp cũ", "").unwrap();
+        s.create("Họp mới", "").unwrap();
+        assert_eq!(
+            ids(&s.search("họp", 10).unwrap()),
+            vec!["Họp mới", "Họp cũ"]
+        );
+    }
+
+    #[test]
+    fn an_empty_or_blank_query_finds_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        s.create("Một", "nội dung").unwrap();
+        assert!(s.search("", 10).unwrap().is_empty());
+        assert!(s.search("   \n ", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn no_match_and_an_empty_store_both_give_an_empty_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        assert!(s.search("bất kỳ", 10).unwrap().is_empty());
+        s.create("Một", "nội dung").unwrap();
+        assert!(s.search("không có từ này", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_limit_is_respected() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        for i in 0..5 {
+            s.create(&format!("Họp {i}"), "").unwrap();
+        }
+        assert_eq!(s.search("họp", 3).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_script_whose_text_file_is_missing_is_still_found_by_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        let meta = s.create("Mất file", "nội dung").unwrap();
+        fs::remove_file(dir.path().join("scripts").join(format!("{}.md", meta.id))).unwrap();
+
+        assert_eq!(ids(&s.search("mất file", 10).unwrap()), vec!["Mất file"]);
+        // And searching for its old text just finds nothing, instead of failing.
+        assert!(s.search("nội dung", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_corrupt_index_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        s.create("Một", "x").unwrap();
+        fs::write(dir.path().join("scripts").join("index.json"), "{ nope").unwrap();
+        assert!(matches!(s.search("x", 10), Err(ScriptError::Index(_))));
     }
 }
