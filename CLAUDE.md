@@ -121,17 +121,19 @@ microphone (Me)          ─┴─► VAD ─► STT ─► question detection �
 - Query: embed question (e5 needs `query:` / `passage:` prefixes) → BM25 + vector → RRF fusion → top 4–6 chunks, max ~2000 tokens of context.
 - Prompt: answer only from documents, 3–5 short bullets, same language as the question, say "Không có trong tài liệu." when unsupported, show sources under the answer.
 
-## 8. Current status (Phase 0)
+## 8. Current status (end of Phase 2 work, not yet released)
 
 Done:
 - Repo layout, workspace, 5 crates with traits and types.
 - Overlay window: transparent, frameless, always on top, content-protected, tray (show/hide, quit).
 - Teleprompter UI: auto-scroll (rAF, frame-rate independent), Space play/pause, ↑↓ speed, +/− font, M mirror, E edit, Home top, Esc hide.
 - Provider presets with tests, Markdown chunker with tests, CI, docs, MIT license.
+- Phase 1 features: persisted settings, global hotkeys, click-through, window position, multiple scripts, old Windows warning.
+- Phase 2 code: capture (`cpal`), resample, VAD + segmenter, whisper engine, model downloader, pipeline, live captions panel (T, 1, 2), macOS permission flow (microphone is asked for up front, system audio via a guided retry).
 
-Verified: frontend build; fmt, clippy and tests on the library crates; `apps/desktop/src-tauri` compiles and the overlay opens on macOS via `npm run dev`; `npm run check` passes.
+Verified: `npm run check` and CI (macOS and Windows, bundles uploaded; whisper builds on both, run on 219f5b5); the overlay opens on macOS; the speech pipeline end to end on Metal with synthetic speech, latency and accuracy in `docs/STT-EVAL.md` (STT 0.4 to 0.9 s, Vietnamese WER 13.6% on clean synthetic speech); the macOS bundle carries the microphone and system audio usage descriptions and requires macOS 13.0; release binary 15.6 MiB.
 
-Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS (`docs/COMPATIBILITY.md` does not exist yet); the microphone and loopback sources on real hardware; Phase 2 on Windows (CI only compiles it).
+Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS (`docs/COMPATIBILITY.md` does not exist yet); the microphone and loopback sources on real hardware and the permission prompts and settings links (the system audio link points at the Screen & System Audio Recording page and is untested); the captions panel inside the Tauri window (only seen in a browser); accuracy on real human speech; Phase 2 behaviour on Windows beyond compiling.
 
 ## 9. Roadmap
 
@@ -140,7 +142,7 @@ Estimates assume one developer part-time.
 ### Phase 0: Foundation (finish)
 - [x] `npm run dev` compiles and opens the overlay on macOS
 - [ ] Confirm overlay is hidden when sharing the full screen in Google Meet (Chrome), Teams, Zoom, OBS; record results in `docs/COMPATIBILITY.md`
-- [x] First CI run green, Windows and macOS bundles downloadable from Actions (run on 27e2e3c: all five jobs passed, both bundles uploaded)
+- [x] First CI run green, Windows and macOS bundles downloadable from Actions (green on 27e2e3c and again on 219f5b5, which includes whisper: all five jobs passed, both bundles uploaded)
 - [x] **Spike**: capture system audio on macOS (ScreenCaptureKit audio or Core Audio taps) in a throwaway binary under `spikes/`; document permissions needed and latency (see `docs/AUDIO-SPIKE.md`)
 
 ### Phase 1: Overlay + teleprompter (2 weeks)
