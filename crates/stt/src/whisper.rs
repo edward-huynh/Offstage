@@ -149,24 +149,41 @@ mod tests {
         assert!(matches!(err, SttError::ModelNotFound(_)));
     }
 
-    /// Minimal canonical-WAV reader (44-byte header) to avoid a dev-dependency.
+    /// Minimal RIFF reader: walks the chunks, so extra chunks before `data` are fine.
     fn read_wav_16k_mono(path: &str) -> Vec<f32> {
         let bytes = std::fs::read(path).expect("read sample");
         assert!(
-            bytes.len() > 44 && &bytes[0..4] == b"RIFF",
+            bytes.len() > 12 && &bytes[0..4] == b"RIFF",
             "not a WAV file"
         );
-        let channels = u16::from_le_bytes([bytes[22], bytes[23]]);
-        let rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
-        let bits = u16::from_le_bytes([bytes[34], bytes[35]]);
-        assert_eq!(
-            (channels, rate, bits),
-            (1, 16_000, 16),
-            "need 16 kHz mono s16"
-        );
-        bytes[44..]
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
-            .collect()
+        let mut format = None;
+        let mut pos = 12;
+        while pos + 8 <= bytes.len() {
+            let id = &bytes[pos..pos + 4];
+            let size = u32::from_le_bytes([
+                bytes[pos + 4],
+                bytes[pos + 5],
+                bytes[pos + 6],
+                bytes[pos + 7],
+            ]) as usize;
+            let body = pos + 8;
+            let end = (body + size).min(bytes.len());
+            if id == b"fmt " {
+                let f = &bytes[body..end];
+                format = Some((
+                    u16::from_le_bytes([f[2], f[3]]),
+                    u32::from_le_bytes([f[4], f[5], f[6], f[7]]),
+                    u16::from_le_bytes([f[14], f[15]]),
+                ));
+            } else if id == b"data" {
+                assert_eq!(format, Some((1, 16_000, 16)), "need 16 kHz mono s16");
+                return bytes[body..end]
+                    .chunks_exact(2)
+                    .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+                    .collect();
+            }
+            pos = body + size + (size & 1);
+        }
+        panic!("WAV has no data chunk");
     }
 }
