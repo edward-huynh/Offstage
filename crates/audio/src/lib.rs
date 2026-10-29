@@ -3,6 +3,8 @@
 
 pub mod capture;
 pub mod resample;
+pub mod segment;
+pub mod vad;
 
 use offstage_core::Speaker;
 
