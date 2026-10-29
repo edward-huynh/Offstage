@@ -6,7 +6,7 @@ members = ["crates/*", "apps/desktop/src-tauri"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/your-org/offstage"
+repository = "https://github.com/edward-huynh/Offstage"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
