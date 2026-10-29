@@ -53,6 +53,9 @@ impl SpeechToText for WhisperStt {
         params.set_translate(false);
         // Each utterance is independent; carrying text over invites hallucinated repeats.
         params.set_no_context(true);
+        // Only the text is used. Timestamp tokens also cost decoding steps, and models
+        // fine-tuned without them (such as PhoWhisper) can emit stray tokens when asked for them.
+        params.set_no_timestamps(true);
         params.set_single_segment(false);
         params.set_print_special(false);
         params.set_print_progress(false);
