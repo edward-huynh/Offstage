@@ -3,6 +3,7 @@
 pub mod knowledge;
 pub mod play;
 pub mod scripts;
+pub mod settings;
 
 use serde::{Deserialize, Serialize};
 

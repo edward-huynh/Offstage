@@ -377,3 +377,57 @@ export async function deleteKnowledge(id: string): Promise<void> {
   }
   await invoke("delete_knowledge", { id });
 }
+
+export type SpeechLanguage = "auto" | "vietnamese" | "english";
+
+/** Settings that are not about the teleprompter look. Rust clamps and stores them. */
+export type AppSettings = {
+  speech_language: SpeechLanguage;
+  interview_system_audio: boolean;
+  interview_microphone: boolean;
+  hide_main_from_capture: boolean;
+};
+
+const SETTINGS_DEFAULTS: AppSettings = {
+  speech_language: "auto",
+  interview_system_audio: true,
+  interview_microphone: false,
+  hide_main_from_capture: true,
+};
+
+let browserSettings: AppSettings = SETTINGS_DEFAULTS;
+
+export async function getSettings(): Promise<AppSettings> {
+  if (!inTauri()) return browserSettings;
+  return invoke<AppSettings>("get_settings");
+}
+
+/** Resolves to what was stored, which can differ from the request when a value is corrected. */
+export async function updateSettings(settings: AppSettings): Promise<AppSettings> {
+  if (!inTauri()) {
+    // Mirrors the rule in Rust: an interview must listen to something.
+    const fixed =
+      settings.interview_system_audio || settings.interview_microphone
+        ? settings
+        : { ...settings, interview_system_audio: true };
+    browserSettings = fixed;
+    return fixed;
+  }
+  return invoke<AppSettings>("update_settings", { settings });
+}
+
+export type HotkeyBinding = { action: "play_pause" | "speed_up" | "speed_down" | "toggle_visibility" | "toggle_click_through"; accelerator: string };
+
+/** Every global shortcut with its default key combination. */
+export async function hotkeyBindings(): Promise<HotkeyBinding[]> {
+  if (!inTauri()) {
+    return [
+      { action: "play_pause", accelerator: "CommandOrControl+Alt+Space" },
+      { action: "speed_up", accelerator: "CommandOrControl+Alt+Up" },
+      { action: "speed_down", accelerator: "CommandOrControl+Alt+Down" },
+      { action: "toggle_visibility", accelerator: "CommandOrControl+Alt+O" },
+      { action: "toggle_click_through", accelerator: "CommandOrControl+Alt+T" },
+    ];
+  }
+  return invoke<HotkeyBinding[]>("hotkey_bindings");
+}

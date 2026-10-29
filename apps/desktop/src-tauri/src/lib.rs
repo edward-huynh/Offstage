@@ -25,6 +25,7 @@ mod knowledge;
 mod listening;
 mod permissions;
 mod play;
+mod settings;
 
 pub(crate) const OVERLAY: &str = "overlay";
 const STORE_FILE: &str = "settings.json";
@@ -441,8 +442,12 @@ pub fn run() {
                 w.set_content_protected(true)?;
             }
             // The main window shows scripts and documents, so it is hidden from screen shares too.
-            if let Some(w) = app.get_webview_window(play::MAIN) {
-                w.set_content_protected(true)?;
+            // The setting can turn this off, so apply the saved choice instead of forcing it.
+            if let Err(e) = settings::apply_capture_protection(
+                app.handle(),
+                settings::load(app.handle())?.hide_main_from_capture,
+            ) {
+                eprintln!("could not apply capture protection to the main window: {e}");
             }
 
             let failures = register_hotkeys(app.handle());
@@ -519,6 +524,9 @@ pub fn run() {
             permissions::audio_permissions,
             permissions::request_microphone_access,
             permissions::open_privacy_settings,
+            settings::get_settings,
+            settings::update_settings,
+            settings::hotkey_bindings,
             knowledge::list_knowledge,
             knowledge::import_knowledge,
             knowledge::delete_knowledge

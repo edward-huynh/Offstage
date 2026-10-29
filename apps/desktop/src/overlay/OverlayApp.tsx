@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { TranscriptPanel } from "../TranscriptPanel";
 import {
   captureProtection,
+  getSettings,
   hotkeyFailures,
   loadConfig,
   onClickThrough,
@@ -10,6 +11,7 @@ import {
   setClickThrough,
   stopPlay,
   type OverlayConfig,
+  type Speaker,
 } from "../tauri";
 import { useAutoScroll } from "../useAutoScroll";
 import { useListening } from "../useListening";
@@ -28,12 +30,15 @@ export function OverlayApp() {
   const interview = play.session?.mode === "interview";
   const listening = useListening(captionsOpen);
   const toggleSource = listening.toggle;
+  const startSources = listening.startAll;
   const isListening = listening.active.me || listening.active.remote;
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
 
+  // The overlay stays alive while hidden, and Settings changes the saved config meanwhile,
+  // so each new session reads it again. Without this the next save would bring old values back.
   useEffect(() => {
     loadConfig().then(setCfg);
-  }, []);
+  }, [play.session]);
 
   // Persist changes after a short pause so holding a key does not write on every repeat.
   // The first value is the one just loaded, so it is skipped.
@@ -55,6 +60,23 @@ export function OverlayApp() {
     setPlaying(false);
     setCaptionsOpen(interview);
   }, [play.session, interview]);
+
+  // An interview starts listening to the sources chosen in Settings, so the captions are
+  // running by the time the call begins.
+  useEffect(() => {
+    if (!interview) return;
+    let cancelled = false;
+    void getSettings().then((s) => {
+      if (cancelled) return;
+      const speakers: Speaker[] = [];
+      if (s.interview_system_audio) speakers.push("remote");
+      if (s.interview_microphone) speakers.push("me");
+      void startSources(speakers);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [play.session, interview, startSources]);
 
   // Back to the top for each new content.
   useEffect(() => {

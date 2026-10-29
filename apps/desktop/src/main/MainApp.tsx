@@ -3,7 +3,9 @@ import { useLibrary } from "../useLibrary";
 import { useSidebarCollapsed } from "../useSidebarCollapsed";
 import { Content } from "./Content";
 import { Home } from "./Home";
+import { Knowledge } from "./Knowledge";
 import { SearchDialog } from "./SearchDialog";
+import { Settings } from "./Settings";
 import { Sidebar } from "./Sidebar";
 
 export type Screen = "home" | "content" | "knowledge" | "settings";
@@ -14,15 +16,6 @@ const TITLES: Record<Screen, string> = {
   knowledge: "Knowledge",
   settings: "Settings",
 };
-
-/** Stands in for a screen that has not been built yet. */
-function ComingSoon() {
-  return (
-    <section className="mn-screen">
-      <p className="mn-lead">Màn hình này đang được làm.</p>
-    </section>
-  );
-}
 
 /** The main window: a sidebar, a title bar and one screen at a time. */
 export function MainApp() {
@@ -65,8 +58,8 @@ export function MainApp() {
         <main className="mn-main">
           {screen === "home" && <Home onNavigate={setScreen} />}
           {screen === "content" && <Content library={library} />}
-          {screen === "knowledge" && <ComingSoon />}
-          {screen === "settings" && <ComingSoon />}
+          {screen === "knowledge" && <Knowledge />}
+          {screen === "settings" && <Settings />}
         </main>
       </div>
       <SearchDialog

@@ -10,7 +10,7 @@ use offstage_audio::{capture::CpalSource, AudioError, AudioSource};
 use offstage_core::{AppEvent, Speaker};
 use offstage_models::{CancellationToken, Downloader, ModelSpec, Progress};
 use offstage_pipeline::{EventSink, LaneStatus, Pipeline, PipelineConfig, PipelineError};
-use offstage_stt::{SpeechToText, WhisperConfig, WhisperStt};
+use offstage_stt::{Language, SpeechToText, WhisperConfig, WhisperStt};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -127,7 +127,16 @@ fn load_engine(app: &AppHandle) -> Result<Arc<dyn SpeechToText>, String> {
     if !path.is_file() {
         return Err(MODEL_MISSING.to_owned());
     }
-    let engine = WhisperStt::load(WhisperConfig::new(path)).map_err(|e| e.to_string())?;
+    // The language is read each time the engine loads, so a change in Settings applies to the
+    // next listening session.
+    let language = crate::settings::load(app)?
+        .speech_language
+        .code()
+        .parse::<Language>()
+        .map_err(|e| e.to_string())?;
+    let mut config = WhisperConfig::new(path);
+    config.language = language;
+    let engine = WhisperStt::load(config).map_err(|e| e.to_string())?;
     Ok(Arc::new(engine))
 }
 
