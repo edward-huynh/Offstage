@@ -43,6 +43,17 @@ const BROWSER_BODY = "Đây là bản chạy trong trình duyệt.\n\nChạy `np
 
 export const inTauri = () => "__TAURI_INTERNALS__" in window;
 
+export type WindowView = "main" | "overlay";
+
+/**
+ * Which window this page is in. Both windows load the same page, so this decides what to draw.
+ * In a browser (`npm run ui`) there is no window, so `?view=overlay` picks the overlay.
+ */
+export function windowView(): WindowView {
+  if (inTauri()) return getCurrentWindow().label === "overlay" ? "overlay" : "main";
+  return new URLSearchParams(window.location.search).get("view") === "overlay" ? "overlay" : "main";
+}
+
 export async function loadConfig(): Promise<OverlayConfig> {
   if (!inTauri()) return DEFAULTS;
   try {
@@ -93,6 +104,23 @@ export async function saveScript(id: string, body: string): Promise<ScriptMeta> 
 export async function renameScript(id: string, title: string): Promise<ScriptMeta> {
   if (!inTauri()) return { ...BROWSER_SCRIPT, title };
   return invoke<ScriptMeta>("rename_script", { id, title });
+}
+
+/** A search result: the script, and the text around the first match when the text matched. */
+export type ScriptHit = { id: string; title: string; snippet: string | null };
+
+/** Searches titles and text, ignoring case and Vietnamese accents. Newest first, titles before text. */
+export async function searchScripts(query: string): Promise<ScriptHit[]> {
+  if (!inTauri()) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const inTitle = BROWSER_SCRIPT.title.toLowerCase().includes(q);
+    const inBody = BROWSER_BODY.toLowerCase().includes(q);
+    return inTitle || inBody
+      ? [{ id: BROWSER_SCRIPT.id, title: BROWSER_SCRIPT.title, snippet: inBody ? BROWSER_BODY : null }]
+      : [];
+  }
+  return invoke<ScriptHit[]>("search_scripts", { query });
 }
 
 export async function deleteScript(id: string): Promise<void> {
@@ -207,7 +235,13 @@ export async function pipelineStatus(): Promise<ListeningStatus> {
 }
 
 export async function modelInfo(): Promise<ModelInfo | null> {
-  if (!inTauri()) return null;
+  // Without Tauri there is no model, so a sample stands in for styling work.
+  if (!inTauri()) {
+    return {
+      spec: { id: "demo", file_name: "demo.bin", size: 190_085_487, license: "MIT", license_url: null },
+      installed: true,
+    };
+  }
   try {
     return await invoke<ModelInfo>("model_info");
   } catch {
@@ -254,6 +288,44 @@ export async function onModelProgress(
   );
 }
 
-export async function hideOverlay() {
-  if (inTauri()) await getCurrentWindow().hide();
+export type PlayMode = "content" | "interview";
+
+/** What the overlay is playing: one content, or an interview with live captions. */
+export type PlaySession = { mode: PlayMode; content_id: string | null };
+
+/** Opens the overlay for `session` and hides the main window. Errors propagate. */
+export async function startPlay(session: PlaySession): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("start_play", { session });
+}
+
+/** Stops listening, closes the overlay and brings the main window back. */
+export async function stopPlay(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("stop_play");
+}
+
+export async function getPlaySession(): Promise<PlaySession | null> {
+  if (!inTauri()) {
+    // Outside Tauri the overlay page stands alone, so it plays the fixed sample.
+    const mode = new URLSearchParams(window.location.search).get("mode");
+    return mode === "interview"
+      ? { mode: "interview", content_id: null }
+      : { mode: "content", content_id: BROWSER_SCRIPT.id };
+  }
+  try {
+    return await invoke<PlaySession | null>("get_play_session");
+  } catch {
+    return null;
+  }
+}
+
+export async function onPlayStarted(handler: (session: PlaySession) => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return listen<PlaySession>("play_started", (event) => handler(event.payload));
+}
+
+export async function onPlayStopped(handler: () => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return listen("play_stopped", () => handler());
 }

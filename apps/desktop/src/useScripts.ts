@@ -27,6 +27,9 @@ export function useScripts(
   const [scripts, setScripts] = useState<ScriptMeta[]>([]);
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** The script open in the editor, or `null` when there is none. */
+  const [current, setCurrent] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<"saved" | "unsaved" | "saving">("saved");
 
   const currentId = useRef<string | null>(null);
   const bodyRef = useRef("");
@@ -46,10 +49,14 @@ export function useScripts(
     const id = currentId.current;
     if (!dirty.current || !id) return;
     dirty.current = false;
+    setSaveState("saving");
     try {
       await saveScript(id, bodyRef.current);
+      // An edit made while saving has already marked the text unsaved again.
+      setSaveState(dirty.current ? "unsaved" : "saved");
     } catch (e) {
       dirty.current = true;
+      setSaveState("unsaved");
       setError(errorMessage(e));
     }
   }, []);
@@ -61,7 +68,9 @@ export function useScripts(
       currentId.current = id;
       bodyRef.current = text;
       dirty.current = false;
+      setCurrent(id);
       setBody(text);
+      setSaveState("saved");
       onActiveChange(id);
     },
     [flush, onActiveChange],
@@ -79,26 +88,23 @@ export function useScripts(
     }
   }, []);
 
-  // Open the saved script on start, or the newest one, or a blank one when there is none.
+  // Open the remembered script on start, or the newest one. With none saved the editor stays empty.
   useEffect(() => {
     if (!ready || started.current) return;
     started.current = true;
     void run(async () => {
       const list = await reloadList();
-      let id = list.find((s) => s.id === activeId)?.id ?? list[0]?.id;
-      if (!id) {
-        const created = await createScript("", "");
-        await reloadList();
-        id = created.id;
-      }
-      await open(id);
+      const id = list.find((s) => s.id === activeId)?.id ?? list[0]?.id;
+      if (id) await open(id);
     });
   }, [ready, activeId, reloadList, open, run]);
 
   const edit = useCallback(
     (text: string) => {
+      if (!currentId.current) return;
       bodyRef.current = text;
       dirty.current = true;
+      setSaveState("unsaved");
       setBody(text);
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void flush(), AUTOSAVE_MS);
@@ -142,13 +148,17 @@ export function useScripts(
         await deleteScript(id);
         const list = await reloadList();
         if (!wasOpen) return;
-        let next = list[0]?.id;
-        if (!next) {
-          const created = await createScript("", "");
-          await reloadList();
-          next = created.id;
+        const next = list[0]?.id;
+        if (next) {
+          await open(next);
+        } else {
+          // That was the last one: leave the editor empty rather than inventing a script.
+          currentId.current = null;
+          bodyRef.current = "";
+          setCurrent(null);
+          setBody("");
+          setSaveState("saved");
         }
-        await open(next);
       }),
     [open, reloadList, run],
   );
@@ -179,6 +189,8 @@ export function useScripts(
 
   return {
     scripts,
+    current,
+    saveState,
     body,
     error,
     clearError,

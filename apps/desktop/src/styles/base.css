@@ -1,0 +1,13 @@
+:root {
+  --ink: #e6edf1;
+  --ink-dim: #9fb2bf;
+  --glass: 28 44 58; /* deep harbour slate */
+  --cue: #f2c94c; /* stage cue-light amber */
+  --font: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+body { font-family: var(--font); color: var(--ink); }

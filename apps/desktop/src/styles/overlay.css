@@ -1,0 +1,157 @@
+/* The overlay window: transparent, frameless, always on top. */
+html[data-view="overlay"], html[data-view="overlay"] body, html[data-view="overlay"] #root { background: transparent; }
+html[data-view="overlay"] body { overflow: hidden; }
+
+.overlay {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: rgb(var(--glass) / var(--bg-alpha, 0.85));
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+/* Amber frame: visible even when the bar is out of sight, so click-through is never a surprise. */
+.overlay.through { box-shadow: inset 0 0 0 2px var(--cue); }
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  cursor: grab;
+  user-select: none;
+}
+.spacer { flex: 1; }
+.notice {
+  margin: 0 14px 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink);
+  border: 1px solid var(--cue);
+  border-radius: 8px;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-dim); }
+.dot.live { background: var(--cue); }
+.warn { color: var(--cue); }
+
+.script {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 28px;
+  line-height: 1.45;
+  font-weight: 500;
+  scrollbar-width: none;
+}
+.script::-webkit-scrollbar { display: none; }
+.script p { margin: 0 0 0.9em; max-width: 34ch; }
+.script .pad { height: 30%; }
+.script.mirror { transform: scaleX(-1); }
+
+/* Reading guide at one third of the height, where the eye naturally rests near a webcam. */
+.cue-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 38%;
+  height: 2px;
+  background: var(--cue);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.script-title {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+/* Floats over the bottom of the overlay instead of resizing the script, so the script
+   and the reading line do not move when captions open. */
+.transcript {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  height: 42%;
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  /* Solid: even faint script text showing through makes the captions hard to read. */
+  background: rgb(8 14 20);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  font-size: 13px;
+}
+.tr-bar { display: flex; align-items: center; gap: 6px; }
+.transcript button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: rgb(255 255 255 / 0.1);
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.transcript button:hover:not(:disabled) { background: rgb(255 255 255 / 0.18); }
+.transcript button:disabled { opacity: 0.5; cursor: default; }
+.transcript button:focus-visible { outline: 2px solid rgb(255 255 255 / 0.4); outline-offset: 1px; }
+.src { display: inline-flex; align-items: center; gap: 6px; }
+.src.on { background: rgb(255 255 255 / 0.2); }
+.src.on .dot { background: var(--cue); }
+.transcript kbd { font: inherit; font-size: 11px; color: var(--ink-dim); }
+.tr-latency { font-size: 11px; color: var(--ink-dim); }
+.tr-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--cue);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.tr-notice progress { flex: 0 0 90px; accent-color: var(--cue); }
+.tr-notice span { flex: 1; }
+.tr-error { margin: 0; color: var(--cue); font-size: 12px; }
+.tr-lines {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  line-height: 1.4;
+}
+.tr-lines li { margin: 0 0 3px; }
+.tr-lines .empty { color: var(--ink-dim); }
+.tr-lines b { font-weight: 600; margin-right: 2px; }
+.tr-lines .me b { color: var(--cue); }
+.tr-lines .remote b { color: #7cc4f0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot.live { transition: none; }
+}
+
+.stop-hint { color: var(--ink-dim); }
+
+/* Interview mode shows the captions over the whole overlay, so the script area holds a note. */
+.interview-note {
+  flex: 1;
+  padding: 4px 18px;
+  color: var(--ink-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.interview-note strong { color: var(--ink); font-size: 14px; }
+.interview-note p { margin: 4px 0 0; }
