@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelDownload,
+  deniedPermission,
   downloadModel,
   errorMessage,
   inTauri,
@@ -9,10 +10,12 @@ import {
   onListeningError,
   onModelProgress,
   onTranscript,
+  openPrivacySettings,
   pipelineStatus,
   startListening,
   stopListening,
   type ModelInfo,
+  type PrivacyPane,
   type Speaker,
 } from "./tauri";
 
@@ -54,6 +57,8 @@ export function useListening(panelOpen: boolean) {
   const [needsModel, setNeedsModel] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  /** The source the OS refused to let the app hear, until the user retries. */
+  const [permissionIssue, setPermissionIssue] = useState<PrivacyPane | null>(null);
 
   const nextId = useRef(0);
   /** The source the user asked for when the model turned out to be missing. */
@@ -107,15 +112,19 @@ export function useListening(panelOpen: boolean) {
   const toggle = useCallback(
     async (speaker: Speaker) => {
       setError(null);
+      setPermissionIssue(null);
       setBusy(speaker);
       try {
         if (active[speaker]) await stopListening(speaker);
         else await startListening(speaker);
       } catch (e) {
         const message = errorMessage(e);
+        const denied = deniedPermission(message);
         if (message === MODEL_MISSING) {
           waitingForModel.current = speaker;
           setNeedsModel(true);
+        } else if (denied) {
+          setPermissionIssue(denied);
         } else {
           setError(friendlyError(message));
         }
@@ -148,6 +157,20 @@ export function useListening(panelOpen: boolean) {
     if (speaker) await toggle(speaker);
   }, [model, toggle]);
 
+  const openSettings = useCallback(async () => {
+    if (!permissionIssue) return;
+    try {
+      await openPrivacySettings(permissionIssue);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }, [permissionIssue]);
+
+  /** Tries the refused source again, once the user has allowed it in the settings. */
+  const retryPermission = useCallback(async () => {
+    if (permissionIssue) await toggle(permissionIssue === "microphone" ? "me" : "remote");
+  }, [permissionIssue, toggle]);
+
   const cancel = useCallback(() => void cancelDownload(), []);
   const clear = useCallback(() => setLines([]), []);
   const dismissError = useCallback(() => setError(null), []);
@@ -161,7 +184,10 @@ export function useListening(panelOpen: boolean) {
     needsModel,
     progress,
     latencyMs,
+    permissionIssue,
     toggle,
+    openSettings,
+    retryPermission,
     startDownload,
     cancel,
     clear,

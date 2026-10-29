@@ -298,7 +298,10 @@ export function App() {
           needsModel={listening.needsModel}
           progress={listening.progress}
           latencyMs={listening.latencyMs}
+          permissionIssue={listening.permissionIssue}
           onToggle={(speaker) => void toggleSource(speaker)}
+          onOpenSettings={() => void listening.openSettings()}
+          onRetryPermission={() => void listening.retryPermission()}
           onDownload={() => void listening.startDownload()}
           onCancel={listening.cancel}
           onClear={listening.clear}

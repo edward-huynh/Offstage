@@ -168,6 +168,24 @@ export type ModelInfo = {
 /** What `start_listening` fails with when the speech model has not been downloaded. */
 export const MODEL_MISSING = "model_missing";
 
+/** A privacy page in the system settings. */
+export type PrivacyPane = "microphone" | "system_audio";
+
+/**
+ * `start_listening` fails with `permission_denied:<source>` when the OS will not let the app
+ * hear that source. Returns the source, or `null` for any other error.
+ */
+export function deniedPermission(message: string): PrivacyPane | null {
+  const [code, source] = message.split(":");
+  if (code !== "permission_denied") return null;
+  return source === "microphone" || source === "system_audio" ? source : null;
+}
+
+export async function openPrivacySettings(pane: PrivacyPane): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("open_privacy_settings", { pane });
+}
+
 // These calls let errors propagate so the panel can show them (see `errorMessage`).
 export async function startListening(speaker: Speaker): Promise<void> {
   if (!inTauri()) return;

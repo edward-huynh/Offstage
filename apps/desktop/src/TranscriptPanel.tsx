@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { DownloadProgress, Line } from "./useListening";
-import type { ModelInfo, Speaker } from "./tauri";
+import type { ModelInfo, PrivacyPane, Speaker } from "./tauri";
 
 type Props = {
   lines: Line[];
@@ -12,7 +12,11 @@ type Props = {
   needsModel: boolean;
   progress: DownloadProgress | null;
   latencyMs: number | null;
+  /** The source the OS refused to let the app hear, if the last start failed for that reason. */
+  permissionIssue: PrivacyPane | null;
   onToggle: (speaker: Speaker) => void;
+  onOpenSettings: () => void;
+  onRetryPermission: () => void;
   onDownload: () => void;
   onCancel: () => void;
   onClear: () => void;
@@ -20,6 +24,12 @@ type Props = {
 };
 
 const LABEL: Record<Speaker, string> = { me: "Tôi", remote: "Đối phương" };
+
+const PERMISSION_HELP: Record<PrivacyPane, string> = {
+  microphone: "Offstage chưa được dùng micro. Mở Cài đặt, bật Offstage trong mục Micro, rồi bấm Thử lại.",
+  system_audio:
+    "Offstage chưa được ghi âm thanh hệ thống. Mở Cài đặt, bật Offstage trong mục Ghi âm thanh hệ thống, rồi bấm Thử lại. Nếu vẫn không được, hãy thoát và mở lại Offstage.",
+};
 
 const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
 
@@ -33,7 +43,10 @@ export function TranscriptPanel({
   needsModel,
   progress,
   latencyMs,
+  permissionIssue,
   onToggle,
+  onOpenSettings,
+  onRetryPermission,
   onDownload,
   onCancel,
   onClear,
@@ -100,6 +113,18 @@ export function TranscriptPanel({
             </button>
           </div>
         )
+      )}
+
+      {permissionIssue && (
+        <div className="tr-notice" role="alert">
+          <span>{PERMISSION_HELP[permissionIssue]}</span>
+          <button type="button" onClick={onOpenSettings}>
+            Mở Cài đặt
+          </button>
+          <button type="button" onClick={onRetryPermission}>
+            Thử lại
+          </button>
+        </div>
       )}
 
       {error && (
