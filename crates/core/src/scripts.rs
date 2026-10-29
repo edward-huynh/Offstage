@@ -101,7 +101,7 @@ impl ScriptStore {
     /// All scripts, most recently saved first.
     pub fn list(&self) -> Result<Vec<ScriptMeta>> {
         let mut index = self.load_index()?;
-        index.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        index.sort_by_key(|m| std::cmp::Reverse(m.updated_at));
         Ok(index)
     }
 
