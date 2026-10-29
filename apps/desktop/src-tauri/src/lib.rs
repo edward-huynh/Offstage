@@ -21,6 +21,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_store::StoreExt;
 
 mod listening;
+mod permissions;
 
 const OVERLAY: &str = "overlay";
 const STORE_FILE: &str = "settings.json";
@@ -477,7 +478,10 @@ pub fn run() {
             listening::cancel_download,
             listening::start_listening,
             listening::stop_listening,
-            listening::pipeline_status
+            listening::pipeline_status,
+            permissions::audio_permissions,
+            permissions::request_microphone_access,
+            permissions::open_privacy_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while building Offstage")

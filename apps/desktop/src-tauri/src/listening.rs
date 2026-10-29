@@ -6,13 +6,15 @@
 
 use std::sync::{Arc, Mutex, TryLockError};
 
-use offstage_audio::{capture::CpalSource, AudioSource};
+use offstage_audio::{capture::CpalSource, AudioError, AudioSource};
 use offstage_core::{AppEvent, Speaker};
 use offstage_models::{CancellationToken, Downloader, ModelSpec, Progress};
-use offstage_pipeline::{EventSink, LaneStatus, Pipeline, PipelineConfig};
+use offstage_pipeline::{EventSink, LaneStatus, Pipeline, PipelineConfig, PipelineError};
 use offstage_stt::{SpeechToText, WhisperConfig, WhisperStt};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+use crate::permissions::{self, Access};
 
 /// Error text meaning the model file is not on disk yet. The UI answers by offering a download.
 pub const MODEL_MISSING: &str = "model_missing";
@@ -129,7 +131,46 @@ fn load_engine(app: &AppHandle) -> Result<Arc<dyn SpeechToText>, String> {
     Ok(Arc::new(engine))
 }
 
+/// Start of the error text when the OS will not let the app hear a source, followed by
+/// `:microphone` or `:system_audio`. The UI answers it with a link to the right settings page.
+pub const PERMISSION_DENIED: &str = "permission_denied";
+
+fn source_name(speaker: Speaker) -> &'static str {
+    match speaker {
+        Speaker::Me => "microphone",
+        Speaker::Remote => "system_audio",
+    }
+}
+
+fn start_error(speaker: Speaker, error: &PipelineError) -> String {
+    match error {
+        PipelineError::Audio(AudioError::Permission(_)) => {
+            format!("{PERMISSION_DENIED}:{}", source_name(speaker))
+        }
+        other => other.to_string(),
+    }
+}
+
+/// Asks for the microphone before starting, so the first run shows the system prompt and
+/// waits for the answer instead of timing out behind it. System audio cannot be asked for
+/// ahead of time, so its refusal arrives as a start error instead.
+fn ensure_access(speaker: Speaker) -> Result<(), String> {
+    if speaker != Speaker::Me {
+        return Ok(());
+    }
+    let access = match permissions::microphone_access() {
+        Access::NotDetermined => permissions::request_microphone(),
+        known => known,
+    };
+    if access == Access::Denied {
+        return Err(format!("{PERMISSION_DENIED}:{}", source_name(speaker)));
+    }
+    Ok(())
+}
+
 fn start_blocking(app: &AppHandle, speaker: Speaker) -> Result<(), String> {
+    // Before taking the lock: the prompt waits for a person, and status checks must not stall.
+    ensure_access(speaker)?;
     let listening = app.state::<Listening>();
     let mut inner = listening
         .inner
@@ -154,7 +195,7 @@ fn start_blocking(app: &AppHandle, speaker: Speaker) -> Result<(), String> {
         Speaker::Me => Box::new(CpalSource::microphone()),
         Speaker::Remote => Box::new(CpalSource::system_loopback()),
     };
-    let started = pipeline.start(source).map_err(|e| e.to_string());
+    let started = pipeline.start(source).map_err(|e| start_error(speaker, &e));
 
     // Do not keep the model in memory for a source that never started.
     if started.is_err() && pipeline.status().is_empty() {
@@ -220,5 +261,38 @@ pub fn pipeline_status(state: State<Listening>) -> ListeningStatus {
             lanes: Vec::new(),
             busy: false,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refused_permission_becomes_a_code_naming_the_source() {
+        let refused = PipelineError::Audio(AudioError::Permission("no audio yet".into()));
+        assert_eq!(
+            start_error(Speaker::Me, &refused),
+            "permission_denied:microphone"
+        );
+        assert_eq!(
+            start_error(Speaker::Remote, &refused),
+            "permission_denied:system_audio"
+        );
+    }
+
+    #[test]
+    fn other_start_errors_keep_their_message() {
+        let busy = PipelineError::AlreadyRunning(Speaker::Me);
+        assert_eq!(start_error(Speaker::Me, &busy), busy.to_string());
+        let no_device = PipelineError::Audio(AudioError::Device("no input".into()));
+        assert!(start_error(Speaker::Remote, &no_device).contains("no input"));
+        assert!(!start_error(Speaker::Remote, &no_device).starts_with(PERMISSION_DENIED));
+    }
+
+    #[test]
+    fn only_the_microphone_is_asked_for_up_front() {
+        // System audio cannot be asked for ahead of time, so it never blocks or fails here.
+        assert!(ensure_access(Speaker::Remote).is_ok());
     }
 }

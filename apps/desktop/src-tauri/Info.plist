@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged by Tauri into the app's Info.plist. macOS shows these in its permission prompts. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Offstage dùng micro để hiện phụ đề cho giọng nói của bạn. Âm thanh chỉ được xử lý trên máy này và không bao giờ được lưu lại.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Offstage nghe âm thanh phát ra từ máy để hiện phụ đề cho người bên kia cuộc gọi. Âm thanh chỉ được xử lý trên máy này và không bao giờ được lưu lại.</string>
+</dict>
+</plist>
