@@ -222,6 +222,18 @@ fn stop_blocking(app: &AppHandle, speaker: Speaker) -> Result<(), String> {
     Ok(())
 }
 
+/// Stops every source and releases the model. Used when a play session ends.
+pub fn stop_all(app: &AppHandle) {
+    let listening = app.state::<Listening>();
+    if let Ok(mut inner) = listening.inner.lock() {
+        if let Some(pipeline) = inner.pipeline.as_mut() {
+            pipeline.stop_all();
+        }
+        inner.pipeline = None;
+        inner.engine = None;
+    };
+}
+
 /// Starts listening to the microphone (`me`) or the system audio (`remote`). Fails with
 /// [`MODEL_MISSING`] when the model has not been downloaded. Transcripts arrive as `transcript`
 /// events. Both loading the model and opening the device can take seconds, so this runs off

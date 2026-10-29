@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use offstage_core::scripts::{self, ScriptError, ScriptMeta, ScriptStore};
+use offstage_core::scripts::{self, ScriptError, ScriptHit, ScriptMeta, ScriptStore};
 use offstage_core::{CaptureProtection, HotkeyAction, OverlayConfig, WindowState};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
@@ -22,8 +22,9 @@ use tauri_plugin_store::StoreExt;
 
 mod listening;
 mod permissions;
+mod play;
 
-const OVERLAY: &str = "overlay";
+pub(crate) const OVERLAY: &str = "overlay";
 const STORE_FILE: &str = "settings.json";
 const CONFIG_KEY: &str = "overlay_config";
 const HOTKEY_EVENT: &str = "hotkey";
@@ -87,6 +88,15 @@ fn save_script(scripts: State<Scripts>, id: String, body: String) -> Result<Scri
 #[tauri::command]
 fn rename_script(scripts: State<Scripts>, id: String, title: String) -> Result<ScriptMeta, String> {
     with_scripts(&scripts, |s| s.rename(&id, &title))
+}
+
+/// Results the search dialog can show at once.
+const SEARCH_LIMIT: usize = 20;
+
+/// Searches titles and text, ignoring case and Vietnamese accents.
+#[tauri::command]
+fn search_scripts(scripts: State<Scripts>, query: String) -> Result<Vec<ScriptHit>, String> {
+    with_scripts(&scripts, |s| s.search(&query, SEARCH_LIMIT))
 }
 
 #[tauri::command]
@@ -284,7 +294,12 @@ fn spawn_window_saver(app: AppHandle) -> mpsc::Sender<()> {
     tx
 }
 
+/// Hides or shows the overlay during a play session. Outside a session there is nothing
+/// to show, so it does nothing.
 fn toggle_overlay(app: &AppHandle) {
+    if !play::is_playing(app) {
+        return;
+    }
     if let Some(w) = overlay(app) {
         if w.is_visible().unwrap_or(false) {
             let _ = w.hide();
@@ -392,6 +407,11 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
+            // The main window is the app. Closing it quits, and the overlay goes with it.
+            if window.label() == play::MAIN && matches!(event, WindowEvent::CloseRequested { .. }) {
+                save_window_state(window.app_handle());
+                window.app_handle().exit(0);
+            }
             if window.label() == OVERLAY
                 && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))
             {
@@ -407,10 +427,15 @@ pub fn run() {
             let scripts_dir = app.path().app_data_dir()?.join("scripts");
             app.manage(Scripts(Mutex::new(ScriptStore::new(scripts_dir))));
             app.manage(listening::Listening::default());
+            app.manage(play::Play::default());
             seed_sample_script(app.handle(), &app.state::<Scripts>());
 
             // Belt and braces: config already sets contentProtected, enforce it at runtime too.
             if let Some(w) = overlay(app.handle()) {
+                w.set_content_protected(true)?;
+            }
+            // The main window shows scripts and documents, so it is hidden from screen shares too.
+            if let Some(w) = app.get_webview_window(play::MAIN) {
                 w.set_content_protected(true)?;
             }
 
@@ -428,7 +453,8 @@ pub fn run() {
                 }
             }
 
-            let toggle = MenuItem::with_id(app, "toggle", "Ẩn / Hiện", true, None::<&str>)?;
+            let open = MenuItem::with_id(app, "open", "Mở Offstage", true, None::<&str>)?;
+            let toggle = MenuItem::with_id(app, "toggle", "Ẩn / Hiện overlay", true, None::<&str>)?;
             let through = CheckMenuItem::with_id(
                 app,
                 "click_through",
@@ -438,13 +464,14 @@ pub fn run() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "Thoát", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle, &through, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &toggle, &through, &quit])?;
             app.manage(ClickThroughMenu(through));
 
             let mut tray = TrayIconBuilder::new()
                 .tooltip("Offstage")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => play::show_main(app),
                     "toggle" => toggle_overlay(app),
                     "click_through" => toggle_click_through(app),
                     "quit" => {
@@ -472,6 +499,7 @@ pub fn run() {
             save_script,
             rename_script,
             delete_script,
+            search_scripts,
             import_script,
             listening::model_info,
             listening::download_model,
@@ -479,6 +507,9 @@ pub fn run() {
             listening::start_listening,
             listening::stop_listening,
             listening::pipeline_status,
+            play::start_play,
+            play::stop_play,
+            play::get_play_session,
             permissions::audio_permissions,
             permissions::request_microphone_access,
             permissions::open_privacy_settings
