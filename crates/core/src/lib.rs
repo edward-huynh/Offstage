@@ -237,6 +237,26 @@ pub enum AppEvent {
     Error {
         message: String,
     },
+    /// A model download advanced. `downloaded` counts bytes of the file so far.
+    ModelProgress {
+        id: String,
+        downloaded: u64,
+        total: u64,
+    },
+}
+
+impl AppEvent {
+    /// Name of the Tauri event this is sent under. Matches the `type` tag in the payload.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Transcript { .. } => "transcript",
+            Self::QuestionDetected { .. } => "question_detected",
+            Self::AnswerToken { .. } => "answer_token",
+            Self::AnswerDone { .. } => "answer_done",
+            Self::Error { .. } => "error",
+            Self::ModelProgress { .. } => "model_progress",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -474,6 +494,48 @@ mod tests {
                 "duplicate accelerator for {action:?}"
             );
         }
+    }
+
+    #[test]
+    fn event_names_match_the_type_tag_in_the_payload() {
+        let events = [
+            AppEvent::Transcript {
+                speaker: Speaker::Me,
+                text: "hi".into(),
+                is_final: true,
+            },
+            AppEvent::QuestionDetected {
+                text: "why?".into(),
+            },
+            AppEvent::AnswerToken { token: "a".into() },
+            AppEvent::AnswerDone { sources: vec![] },
+            AppEvent::Error {
+                message: "oops".into(),
+            },
+            AppEvent::ModelProgress {
+                id: "m".into(),
+                downloaded: 1,
+                total: 2,
+            },
+        ];
+        for event in &events {
+            let json: serde_json::Value = serde_json::to_value(event).unwrap();
+            assert_eq!(json["type"], event.name(), "{event:?}");
+        }
+    }
+
+    #[test]
+    fn transcript_event_carries_speaker_and_text() {
+        let json = serde_json::to_string(&AppEvent::Transcript {
+            speaker: Speaker::Remote,
+            text: "xin chào".into(),
+            is_final: true,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"transcript","speaker":"remote","text":"xin chào","is_final":true}"#
+        );
     }
 
     #[test]
