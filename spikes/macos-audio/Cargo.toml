@@ -1,0 +1,17 @@
+[package]
+name = "offstage-macos-audio-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Throwaway spike (task 0.4): macOS system audio capture via Core Audio process tap vs ScreenCaptureKit."
+
+# Bảng rỗng: tách spike khỏi workspace gốc để không ảnh hưởng `npm run check`.
+[workspace]
+
+[dependencies]
+screencapturekit = { version = "11.1", features = ["macos_14_0"] }
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-core-audio = "0.3"
+objc2-core-audio-types = "0.3"
+objc2-core-foundation = "0.3"
