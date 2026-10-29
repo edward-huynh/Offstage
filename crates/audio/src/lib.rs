@@ -1,6 +1,9 @@
 //! Audio capture (mic + system loopback) and voice activity detection.
 //! Phase 2: WASAPI loopback on Windows, ScreenCaptureKit / Core Audio taps on macOS.
 
+pub mod capture;
+pub mod resample;
+
 use offstage_core::Speaker;
 
 /// 16 kHz mono PCM, the format Whisper expects.
@@ -18,6 +21,8 @@ pub enum AudioError {
     Device(String),
     #[error("permission denied: {0}")]
     Permission(String),
+    #[error("resampling failed: {0}")]
+    Resample(String),
 }
 
 pub trait AudioSource: Send {
