@@ -6,3 +6,13 @@ license.workspace = true
 
 [dependencies]
 thiserror.workspace = true
+whisper-rs = { version = "0.16", optional = true }
+
+# `whisper` pulls in whisper.cpp, which is built from source and needs cmake plus a
+# C++ toolchain. It is off by default so `cargo test --workspace` stays light.
+# GPU backends imply `whisper`; enable at most the ones your platform supports.
+[features]
+whisper = ["dep:whisper-rs"]
+metal = ["whisper", "whisper-rs/metal"]
+cuda = ["whisper", "whisper-rs/cuda"]
+vulkan = ["whisper", "whisper-rs/vulkan"]
