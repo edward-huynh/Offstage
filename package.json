@@ -1,0 +1,11 @@
+{
+  "name": "offstage",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix apps/desktop ci",
+    "dev": "npm --prefix apps/desktop run tauri dev",
+    "build": "npm --prefix apps/desktop run tauri build",
+    "ui": "npm --prefix apps/desktop run dev",
+    "check": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace && npm --prefix apps/desktop run typecheck"
+  }
+}

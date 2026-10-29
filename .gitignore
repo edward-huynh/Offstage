@@ -1,0 +1,27 @@
+# Build output
+target/
+dist/
+node_modules/
+*.tsbuildinfo
+apps/desktop/src-tauri/gen/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets
+.env
+.env.*
+
+# Models and audio: never commit (see CLAUDE.md section 6)
+*.gguf
+*.bin
+*.onnx
+*.wav
+*.mp3
+*.m4a
+*.flac
+
+# Local artifacts
+Offstage.zip
