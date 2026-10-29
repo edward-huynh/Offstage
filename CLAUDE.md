@@ -25,7 +25,7 @@ Open source (MIT), general purpose. Use cases we promote: presentations, intervi
 ## 3. Tech stack
 
 - **Shell**: Tauri v2 (Rust) with a React 18 + TypeScript (strict) + Vite overlay UI.
-- **Audio**: `cpal` / `wasapi` (Windows loopback), ScreenCaptureKit or Core Audio taps (macOS loopback), Silero VAD (ONNX).
+- **Audio**: `cpal` 0.18 for the microphone and for loopback (a Core Audio tap on macOS 14.6+, WASAPI loopback on Windows), `rubato` to resample to 16 kHz. ScreenCaptureKit is the planned fallback for older macOS. VAD is an energy detector for now, Silero (ONNX) is still to come.
 - **STT**: `whisper-rs` (whisper.cpp), model `small` q5 by default, PhoWhisper option for Vietnamese.
 - **LLM local**: `llama-cpp-2`, 3–4B instruct models in Q4 (Qwen3 4B, Gemma 3 4B class). Check Hugging Face for current versions.
 - **LLM cloud**: one OpenAI-compatible client (`reqwest` + SSE).
@@ -42,8 +42,10 @@ apps/desktop/                 Tauri app
     tauri.conf.json           overlay window: transparent, alwaysOnTop, contentProtected
     capabilities/default.json window permissions
 crates/core/                  OverlayConfig, Workspace, AppEvent (Rust → UI), Speaker
-crates/audio/                 AudioSource trait, AudioFrame (16 kHz mono)
-crates/stt/                   SpeechToText trait
+crates/audio/                 AudioSource trait, CpalSource (mic + loopback), resample to 16 kHz mono, Vad + Segmenter
+crates/stt/                   SpeechToText trait, WhisperStt behind the `whisper` feature (`metal`, `cuda`, `vulkan`)
+crates/models/                ModelSpec presets and a resumable, checksum-verified downloader
+crates/pipeline/              AudioSource -> Segmenter -> SpeechToText -> AppEvent, one lane per source
 crates/llm/                   LlmProvider trait, ProviderConfig, presets (OpenAI, OpenCode Zen/Go)
 crates/rag/                   Chunk, SearchHit, Markdown chunker (implemented + tested)
 docs/                         ARCHITECTURE.md, ROADMAP.md
@@ -55,7 +57,7 @@ Crates must stay independent and testable without Tauri. Only `apps/desktop/src-
 ## 5. Commands
 
 ```bash
-npm run setup   # install frontend deps
+npm run setup   # install frontend deps (the Rust side also needs cmake and a C++ toolchain: `brew install cmake`)
 npm run dev     # run the desktop app (tauri dev)
 npm run ui      # frontend only in a browser, for styling work
 npm run check   # cargo fmt --check, clippy -D warnings, cargo test, tsc
@@ -83,9 +85,10 @@ system loopback (Remote) ─┐
 microphone (Me)          ─┴─► VAD ─► STT ─► question detection ─► RAG retrieve ─► LLM ─► overlay
 ```
 
-- Each stage runs on its own tokio task, connected by `tokio::mpsc` channels.
+- Each source gets a lane of two threads (segmenter, then speech-to-text) joined by bounded `std::sync::mpsc` channels. The capture callback and `transcribe` both block, so plain threads fit better than tokio tasks here. Later stages (LLM streaming) can bridge to tokio.
+- The speech engine (about 190 MB) is loaded when listening starts and released when the last source stops, to keep idle RAM low.
 - A newly detected question cancels the answer currently being generated.
-- Rust emits `AppEvent` (see `crates/core`) to the UI via Tauri events: `transcript`, `question_detected`, `answer_token`, `answer_done`, `error`.
+- Rust emits `AppEvent` (see `crates/core`) to the UI via Tauri events: `transcript`, `question_detected`, `answer_token`, `answer_done`, `error`, `model_progress`. `AppEvent::name()` gives the event name.
 - Speaker separation comes for free from the channel: mic = `Me`, loopback = `Remote`. Question detection only looks at `Remote` by default.
 
 ### Screen-share exclusion
@@ -128,7 +131,7 @@ Done:
 
 Verified: frontend build; fmt, clippy and tests on the library crates; `apps/desktop/src-tauri` compiles and the overlay opens on macOS via `npm run dev`; `npm run check` passes.
 
-Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS; CI has never run (no git repo yet).
+Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS (`docs/COMPATIBILITY.md` does not exist yet); the microphone and loopback sources on real hardware; Phase 2 on Windows (CI only compiles it).
 
 ## 9. Roadmap
 
@@ -137,8 +140,8 @@ Estimates assume one developer part-time.
 ### Phase 0: Foundation (finish)
 - [x] `npm run dev` compiles and opens the overlay on macOS
 - [ ] Confirm overlay is hidden when sharing the full screen in Google Meet (Chrome), Teams, Zoom, OBS; record results in `docs/COMPATIBILITY.md`
-- [ ] First CI run green, Windows and macOS bundles downloadable from Actions
-- [ ] **Spike**: capture system audio on macOS (ScreenCaptureKit audio or Core Audio taps) in a throwaway binary under `spikes/`; document permissions needed and latency
+- [x] First CI run green, Windows and macOS bundles downloadable from Actions (run on 27e2e3c: all five jobs passed, both bundles uploaded)
+- [x] **Spike**: capture system audio on macOS (ScreenCaptureKit audio or Core Audio taps) in a throwaway binary under `spikes/`; document permissions needed and latency (see `docs/AUDIO-SPIKE.md`)
 
 ### Phase 1: Overlay + teleprompter (2 weeks)
 - [ ] Global hotkeys via `tauri-plugin-global-shortcut` (work when overlay is not focused): play/pause, speed, show/hide, click-through toggle
