@@ -1,0 +1,15 @@
+# Throwaway measurements for the speech pipeline (task 2.8). Not part of the workspace, so it
+# does not affect `npm run check`. The empty [workspace] table keeps it that way.
+[package]
+name = "offstage-stt-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+offstage-core = { path = "../../crates/core" }
+offstage-audio = { path = "../../crates/audio" }
+offstage-pipeline = { path = "../../crates/pipeline" }
+offstage-stt = { path = "../../crates/stt", features = ["whisper", "metal"] }
