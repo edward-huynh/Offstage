@@ -130,6 +130,73 @@ body { font-family: var(--font); color: var(--ink); overflow: hidden; }
   padding: 3px 8px;
 }
 
+/* Floats over the bottom of the overlay instead of resizing the script, so the script
+   and the reading line do not move when captions open. */
+.transcript {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  height: 42%;
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  /* Solid: even faint script text showing through makes the captions hard to read. */
+  background: rgb(8 14 20);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  font-size: 13px;
+}
+.tr-bar { display: flex; align-items: center; gap: 6px; }
+.transcript button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: rgb(255 255 255 / 0.1);
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.transcript button:hover:not(:disabled) { background: rgb(255 255 255 / 0.18); }
+.transcript button:disabled { opacity: 0.5; cursor: default; }
+.transcript button:focus-visible { outline: 2px solid var(--cue); outline-offset: 1px; }
+.src { display: inline-flex; align-items: center; gap: 6px; }
+.src.on { border-color: var(--cue); }
+.src.on .dot { background: var(--cue); }
+.transcript kbd { font: inherit; font-size: 11px; color: var(--ink-dim); }
+.tr-latency { font-size: 11px; color: var(--ink-dim); }
+.tr-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--cue);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.tr-notice progress { flex: 0 0 90px; accent-color: var(--cue); }
+.tr-notice span { flex: 1; }
+.tr-error { margin: 0; color: var(--cue); font-size: 12px; }
+.tr-lines {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  line-height: 1.4;
+}
+.tr-lines li { margin: 0 0 3px; }
+.tr-lines .empty { color: var(--ink-dim); }
+.tr-lines b { font-weight: 600; margin-right: 2px; }
+.tr-lines .me b { color: var(--cue); }
+.tr-lines .remote b { color: #7cc4f0; }
+
 .editor {
   flex: 1;
   margin: 0 14px 14px;

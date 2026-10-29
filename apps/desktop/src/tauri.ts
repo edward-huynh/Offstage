@@ -35,13 +35,13 @@ export async function captureProtection(): Promise<CaptureProtection> {
   }
 }
 
-export type ScriptMeta ={ id: string; title: string; updated_at: number };
+export type ScriptMeta = { id: string; title: string; updated_at: number };
 
 // Without Tauri (`npm run ui`) there is no storage, so one fixed script stands in for styling work.
 const BROWSER_SCRIPT: ScriptMeta = { id: "browser", title: "Kịch bản mẫu", updated_at: 0 };
 const BROWSER_BODY = "Đây là bản chạy trong trình duyệt.\n\nChạy `npm run dev` để dùng nhiều kịch bản.";
 
-const inTauri = () => "__TAURI_INTERNALS__" in window;
+export const inTauri = () => "__TAURI_INTERNALS__" in window;
 
 export async function loadConfig(): Promise<OverlayConfig> {
   if (!inTauri()) return DEFAULTS;
@@ -139,6 +139,101 @@ export async function hotkeyFailures(): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/** Which side of the call a transcript line came from: the microphone or the system audio. */
+export type Speaker = "me" | "remote";
+
+export type LaneStatus = {
+  speaker: Speaker;
+  utterances: number;
+  dropped: number;
+  /** From a finished utterance to its transcript, leaving out the closing silence. */
+  last_latency_ms: number | null;
+};
+
+export type ListeningStatus = { lanes: LaneStatus[]; busy: boolean };
+
+export type ModelInfo = {
+  spec: {
+    id: string;
+    file_name: string;
+    size: number;
+    license: string;
+    license_url: string | null;
+  };
+  installed: boolean;
+};
+
+/** What `start_listening` fails with when the speech model has not been downloaded. */
+export const MODEL_MISSING = "model_missing";
+
+// These calls let errors propagate so the panel can show them (see `errorMessage`).
+export async function startListening(speaker: Speaker): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("start_listening", { speaker });
+}
+
+export async function stopListening(speaker: Speaker): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("stop_listening", { speaker });
+}
+
+export async function pipelineStatus(): Promise<ListeningStatus> {
+  if (!inTauri()) return { lanes: [], busy: false };
+  try {
+    return await invoke<ListeningStatus>("pipeline_status");
+  } catch {
+    return { lanes: [], busy: false };
+  }
+}
+
+export async function modelInfo(): Promise<ModelInfo | null> {
+  if (!inTauri()) return null;
+  try {
+    return await invoke<ModelInfo>("model_info");
+  } catch {
+    return null;
+  }
+}
+
+/** Resolves when the model is complete and verified. Progress arrives through `onModelProgress`. */
+export async function downloadModel(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("download_model");
+}
+
+export async function cancelDownload(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("cancel_download");
+}
+
+type TranscriptEvent = { type: "transcript"; speaker: Speaker; text: string; is_final: boolean };
+type ErrorEvent = { type: "error"; message: string };
+type ModelProgressEvent = { type: "model_progress"; id: string; downloaded: number; total: number };
+
+export async function onTranscript(
+  handler: (speaker: Speaker, text: string) => void,
+): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return listen<TranscriptEvent>("transcript", (event) =>
+    handler(event.payload.speaker, event.payload.text),
+  );
+}
+
+/** Problems the pipeline reports while running, such as transcription falling behind. */
+export async function onListeningError(handler: (message: string) => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return listen<ErrorEvent>("error", (event) => handler(event.payload.message));
+}
+
+export async function onModelProgress(
+  handler: (downloaded: number, total: number) => void,
+): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return listen<ModelProgressEvent>("model_progress", (event) =>
+    handler(event.payload.downloaded, event.payload.total),
+  );
 }
 
 export async function hideOverlay() {

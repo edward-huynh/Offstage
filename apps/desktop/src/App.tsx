@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ScriptPanel } from "./ScriptPanel";
+import { TranscriptPanel } from "./TranscriptPanel";
 import {
   captureProtection,
   hideOverlay,
@@ -12,6 +13,7 @@ import {
   type OverlayConfig,
 } from "./tauri";
 import { useAutoScroll } from "./useAutoScroll";
+import { useListening } from "./useListening";
 import { useScripts } from "./useScripts";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -23,6 +25,10 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [editing, setEditing] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [captionsOpen, setCaptionsOpen] = useState(false);
+  const listening = useListening(captionsOpen);
+  const toggleSource = listening.toggle;
+  const isListening = listening.active.me || listening.active.remote;
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
 
   const setActiveScript = useCallback((id: string) => {
@@ -166,6 +172,15 @@ export function App() {
           setPlaying(false);
           setEditing(true);
           break;
+        case "t":
+          setCaptionsOpen((open) => !open);
+          break;
+        case "1":
+          if (captionsOpen) void toggleSource("me");
+          break;
+        case "2":
+          if (captionsOpen) void toggleSource("remote");
+          break;
         case "l":
           setPlaying(false);
           clearError();
@@ -182,7 +197,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cfg, editing, panelOpen, scroller, flush, refresh, clearError]);
+  }, [cfg, editing, panelOpen, captionsOpen, toggleSource, scroller, flush, refresh, clearError]);
 
   if (!cfg) return null;
 
@@ -204,6 +219,11 @@ export function App() {
           </span>
         )}
         <span className="spacer" data-tauri-drag-region />
+        {isListening && (
+          <span className="warn" title="Mic hoặc âm thanh hệ thống đang được nhận dạng" data-tauri-drag-region>
+            ● Đang nghe
+          </span>
+        )}
         {cfg.click_through && (
           <span className="warn" data-tauri-drag-region>
             Chuột xuyên qua · Ctrl/⌘+Alt+T để tắt
@@ -267,6 +287,23 @@ export function App() {
           ))}
           <div className="pad" />
         </div>
+      )}
+      {captionsOpen && !editing && !panelOpen && (
+        <TranscriptPanel
+          lines={listening.lines}
+          active={listening.active}
+          busy={listening.busy}
+          error={listening.error}
+          model={listening.model}
+          needsModel={listening.needsModel}
+          progress={listening.progress}
+          latencyMs={listening.latencyMs}
+          onToggle={(speaker) => void toggleSource(speaker)}
+          onDownload={() => void listening.startDownload()}
+          onCancel={listening.cancel}
+          onClear={listening.clear}
+          onDismissError={listening.dismissError}
+        />
       )}
       {!editing && !panelOpen && <div className="cue-line" style={{ top: `${cfg.reading_line * 100}%` }} aria-hidden />}
     </main>
