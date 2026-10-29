@@ -329,3 +329,51 @@ export async function onPlayStopped(handler: () => void): Promise<() => void> {
   if (!inTauri()) return () => {};
   return listen("play_stopped", () => handler());
 }
+
+export type KnowledgeKind = "pdf" | "docx" | "markdown" | "text";
+
+export type KnowledgeDoc = {
+  id: string;
+  /** File name as shown to the user, without folders. */
+  name: string;
+  kind: KnowledgeKind;
+  size_bytes: number;
+  /** Unix time in milliseconds. */
+  added_at: number;
+};
+
+export type SkippedFile = { name: string; reason: string };
+
+/** Outcome of importing a batch of files: one bad file does not spoil the rest. */
+export type ImportReport = { imported: KnowledgeDoc[]; skipped: SkippedFile[] };
+
+// Without Tauri there is no storage, so a few documents stand in for styling work.
+// They live in memory, so deleting one in the browser has a visible effect.
+let browserDocs: KnowledgeDoc[] = [
+  { id: "k3", name: "Mô tả công việc.pdf", kind: "pdf", size_bytes: 248_000, added_at: 3 },
+  { id: "k2", name: "CV Nguyễn Văn A.docx", kind: "docx", size_bytes: 61_400, added_at: 2 },
+  { id: "k1", name: "Tiêu chí đánh giá.md", kind: "markdown", size_bytes: 2_100, added_at: 1 },
+];
+
+/** Documents in the knowledge store, newest first. */
+export async function listKnowledge(): Promise<KnowledgeDoc[]> {
+  if (!inTauri()) return browserDocs;
+  return invoke<KnowledgeDoc[]>("list_knowledge");
+}
+
+/**
+ * Opens a multi-file picker in Rust, which reads and stores the files. An empty report
+ * means the user cancelled.
+ */
+export async function importKnowledge(): Promise<ImportReport> {
+  if (!inTauri()) return { imported: [], skipped: [] };
+  return invoke<ImportReport>("import_knowledge");
+}
+
+export async function deleteKnowledge(id: string): Promise<void> {
+  if (!inTauri()) {
+    browserDocs = browserDocs.filter((d) => d.id !== id);
+    return;
+  }
+  await invoke("delete_knowledge", { id });
+}

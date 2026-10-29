@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use offstage_core::knowledge::KnowledgeStore;
 use offstage_core::scripts::{self, ScriptError, ScriptHit, ScriptMeta, ScriptStore};
 use offstage_core::{CaptureProtection, HotkeyAction, OverlayConfig, WindowState};
 use tauri::{
@@ -20,6 +21,7 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_store::StoreExt;
 
+mod knowledge;
 mod listening;
 mod permissions;
 mod play;
@@ -426,6 +428,10 @@ pub fn run() {
 
             let scripts_dir = app.path().app_data_dir()?.join("scripts");
             app.manage(Scripts(Mutex::new(ScriptStore::new(scripts_dir))));
+            let knowledge_dir = app.path().app_data_dir()?.join("knowledge");
+            app.manage(knowledge::Knowledge(Mutex::new(KnowledgeStore::new(
+                knowledge_dir,
+            ))));
             app.manage(listening::Listening::default());
             app.manage(play::Play::default());
             seed_sample_script(app.handle(), &app.state::<Scripts>());
@@ -512,7 +518,10 @@ pub fn run() {
             play::get_play_session,
             permissions::audio_permissions,
             permissions::request_microphone_access,
-            permissions::open_privacy_settings
+            permissions::open_privacy_settings,
+            knowledge::list_knowledge,
+            knowledge::import_knowledge,
+            knowledge::delete_knowledge
         ])
         .build(tauri::generate_context!())
         .expect("error while building Offstage")
