@@ -20,6 +20,8 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_store::StoreExt;
 
+mod listening;
+
 const OVERLAY: &str = "overlay";
 const STORE_FILE: &str = "settings.json";
 const CONFIG_KEY: &str = "overlay_config";
@@ -403,6 +405,7 @@ pub fn run() {
 
             let scripts_dir = app.path().app_data_dir()?.join("scripts");
             app.manage(Scripts(Mutex::new(ScriptStore::new(scripts_dir))));
+            app.manage(listening::Listening::default());
             seed_sample_script(app.handle(), &app.state::<Scripts>());
 
             // Belt and braces: config already sets contentProtected, enforce it at runtime too.
@@ -468,7 +471,13 @@ pub fn run() {
             save_script,
             rename_script,
             delete_script,
-            import_script
+            import_script,
+            listening::model_info,
+            listening::download_model,
+            listening::cancel_download,
+            listening::start_listening,
+            listening::stop_listening,
+            listening::pipeline_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building Offstage")

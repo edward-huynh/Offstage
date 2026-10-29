@@ -2645,7 +2645,11 @@ dependencies = [
 name = "offstage-desktop"
 version = "0.1.0"
 dependencies = [
+ "offstage-audio",
  "offstage-core",
+ "offstage-models",
+ "offstage-pipeline",
+ "offstage-stt",
  "serde",
  "serde_json",
  "tauri",
@@ -2677,6 +2681,17 @@ dependencies = [
  "tokio",
  "tokio-util",
  "wiremock",
+]
+
+[[package]]
+name = "offstage-pipeline"
+version = "0.1.0"
+dependencies = [
+ "offstage-audio",
+ "offstage-core",
+ "offstage-stt",
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

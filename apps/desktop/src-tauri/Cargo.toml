@@ -19,6 +19,15 @@ tauri-plugin-dialog = "2"
 serde.workspace = true
 serde_json.workspace = true
 offstage-core.workspace = true
+offstage-audio = { path = "../../../crates/audio" }
+offstage-models = { path = "../../../crates/models" }
+offstage-pipeline = { path = "../../../crates/pipeline" }
+# whisper.cpp is built from source, so the build needs cmake and a C++ toolchain.
+offstage-stt = { path = "../../../crates/stt", features = ["whisper"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-version = "0.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Runs the model on the Apple GPU.
+offstage-stt = { path = "../../../crates/stt", features = ["metal"] }
