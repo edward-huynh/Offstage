@@ -1,5 +1,6 @@
 //! Shared types: configuration, workspaces and app-wide events.
 
+pub mod db;
 pub mod knowledge;
 pub mod scripts;
 

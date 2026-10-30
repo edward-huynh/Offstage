@@ -1,12 +1,13 @@
-//! Knowledge documents (JD, CV, rubrics...): the user's own files, copied into the app's
-//! storage directory next to a small JSON index.
+//! Knowledge documents (JD, CV, rubrics...): the user's own files. The database lists them
+//! and the files themselves are copied into a folder next to it, since a 20 MB document
+//! does not belong in a table.
 //!
 //! This only stores and lists files. Extracting text and indexing them is Phase 4 (RAG),
 //! which will read the stored files through [`KnowledgeStore::path_of`].
 //!
-//! Ids are only ever taken from the index, so a caller-supplied id can never point
-//! outside the storage directory, and stored files are named after the id, never after
-//! the user's file name.
+//! Stored files are named after the id the store generates, never after the user's file
+//! name, and an id is only honoured when the database knows it, so a caller-supplied id
+//! can never point outside the storage folder.
 
 use std::{
     fs, io,
@@ -14,12 +15,14 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
+
+use crate::db::{Db, DbError};
 
 /// Largest file accepted, in bytes.
 pub const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 
-const INDEX_FILE: &str = "index.json";
 const DEFAULT_NAME: &str = "Tài liệu";
 const MAX_NAME_CHARS: usize = 120;
 
@@ -49,6 +52,22 @@ impl KnowledgeKind {
         }
     }
 
+    /// Name used in the database. Matches the serde name, so it is also what the UI sees.
+    fn db_name(self) -> &'static str {
+        match self {
+            Self::Pdf => "pdf",
+            Self::Docx => "docx",
+            Self::Markdown => "markdown",
+            Self::Text => "text",
+        }
+    }
+
+    fn from_db_name(name: &str) -> Option<Self> {
+        [Self::Pdf, Self::Docx, Self::Markdown, Self::Text]
+            .into_iter()
+            .find(|kind| kind.db_name() == name)
+    }
+
     /// Extension of the stored copy. `.markdown` files are stored as `.md`.
     pub fn extension(self) -> &'static str {
         match self {
@@ -76,9 +95,9 @@ pub struct KnowledgeDoc {
 #[derive(Debug, thiserror::Error)]
 pub enum KnowledgeError {
     #[error("knowledge storage error: {0}")]
+    Db(#[from] DbError),
+    #[error("knowledge file error: {0}")]
     Io(#[from] io::Error),
-    #[error("knowledge index is unreadable: {0}")]
-    Index(#[from] serde_json::Error),
     #[error("knowledge document not found: {0}")]
     NotFound(String),
     #[error("Chỉ nhận .pdf, .docx, .md, .txt")]
@@ -89,32 +108,56 @@ pub enum KnowledgeError {
     Empty,
 }
 
+impl From<rusqlite::Error> for KnowledgeError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Db(e.into())
+    }
+}
+
 type Result<T> = std::result::Result<T, KnowledgeError>;
 
+fn doc_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<KnowledgeDoc> {
+    let kind: String = row.get(2)?;
+    let kind = KnowledgeKind::from_db_name(&kind).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            2,
+            rusqlite::types::Type::Text,
+            format!("unknown document kind {kind:?}").into(),
+        )
+    })?;
+    Ok(KnowledgeDoc {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        kind,
+        size_bytes: u64::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
+        added_at: u64::try_from(row.get::<_, i64>(4)?).unwrap_or(0),
+    })
+}
+
 pub struct KnowledgeStore {
+    db: Db,
+    /// Where the files themselves are kept.
     dir: PathBuf,
     clock: Box<dyn Fn() -> u64 + Send + Sync>,
 }
 
 impl KnowledgeStore {
-    /// Does not touch the disk: the directory is created on the first import.
-    pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self::with_clock(dir, system_millis)
+    /// Does not touch the disk: `dir` is created on the first import.
+    pub fn new(db: Db, dir: impl Into<PathBuf>) -> Self {
+        Self::with_clock(db, dir, system_millis)
     }
 
     /// Like [`KnowledgeStore::new`] with a custom time source, for tests.
     pub fn with_clock(
+        db: Db,
         dir: impl Into<PathBuf>,
         clock: impl Fn() -> u64 + Send + Sync + 'static,
     ) -> Self {
         Self {
+            db,
             dir: dir.into(),
             clock: Box::new(clock),
         }
-    }
-
-    fn index_path(&self) -> PathBuf {
-        self.dir.join(INDEX_FILE)
     }
 
     fn file_path(&self, doc: &KnowledgeDoc) -> PathBuf {
@@ -122,36 +165,28 @@ impl KnowledgeStore {
             .join(format!("{}.{}", doc.id, doc.kind.extension()))
     }
 
-    fn load_index(&self) -> Result<Vec<KnowledgeDoc>> {
-        match fs::read_to_string(self.index_path()) {
-            Ok(text) => Ok(serde_json::from_str(&text)?),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    fn save_index(&self, index: &[KnowledgeDoc]) -> Result<()> {
-        fs::create_dir_all(&self.dir)?;
-        let json = serde_json::to_string_pretty(index)?;
-        write_atomic(&self.index_path(), json.as_bytes())?;
-        Ok(())
-    }
-
-    fn position(index: &[KnowledgeDoc], id: &str) -> Result<usize> {
-        index
-            .iter()
-            .position(|d| d.id == id)
+    fn get(&self, id: &str) -> Result<KnowledgeDoc> {
+        self.db
+            .lock()?
+            .query_row(
+                "SELECT id, name, kind, size_bytes, added_at FROM knowledge WHERE id = ?1",
+                [id],
+                doc_from_row,
+            )
+            .optional()?
             .ok_or_else(|| KnowledgeError::NotFound(id.to_owned()))
     }
 
     /// All documents, most recently added first.
     pub fn list(&self) -> Result<Vec<KnowledgeDoc>> {
-        let mut index = self.load_index()?;
-        // The index is in insertion order. Reversing first keeps the newest of two
-        // documents added in the same millisecond on top, since the sort is stable.
-        index.reverse();
-        index.sort_by_key(|d| std::cmp::Reverse(d.added_at));
-        Ok(index)
+        let conn = self.db.lock()?;
+        // `rowid` breaks ties so the newest of two documents added in the same millisecond is first.
+        let mut stmt = conn.prepare(
+            "SELECT id, name, kind, size_bytes, added_at FROM knowledge
+             ORDER BY added_at DESC, rowid DESC",
+        )?;
+        let rows = stmt.query_map([], doc_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Copies a file into the store. `file_name` may carry folders (it is whatever the
@@ -167,12 +202,17 @@ impl KnowledgeStore {
             return Err(KnowledgeError::Empty);
         }
 
-        let mut index = self.load_index()?;
+        let conn = self.db.lock()?;
         let now = (self.clock)();
         let mut stamp = now;
         let id = loop {
             let candidate = format!("k{stamp:x}");
-            if index.iter().all(|d| d.id != candidate) {
+            let taken = conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM knowledge WHERE id = ?1)",
+                [&candidate],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !taken {
                 break candidate;
             }
             stamp += 1;
@@ -188,22 +228,32 @@ impl KnowledgeStore {
         fs::create_dir_all(&self.dir)?;
         let path = self.file_path(&doc);
         write_atomic(&path, bytes)?;
-        index.push(doc.clone());
-        if let Err(e) = self.save_index(&index) {
-            // Without its index entry the copy would be unreachable.
+        let inserted = conn.execute(
+            "INSERT INTO knowledge (id, name, kind, size_bytes, added_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                doc.id,
+                doc.name,
+                doc.kind.db_name(),
+                i64::try_from(doc.size_bytes).unwrap_or(i64::MAX),
+                i64::try_from(doc.added_at).unwrap_or(i64::MAX),
+            ],
+        );
+        if let Err(e) = inserted {
+            // Without its row the copy would be unreachable.
             let _ = fs::remove_file(&path);
-            return Err(e);
+            return Err(KnowledgeError::from(e));
         }
         Ok(doc)
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
-        let mut index = self.load_index()?;
-        let pos = Self::position(&index, id)?;
-        let doc = index.remove(pos);
-        // Index first: if removing the file fails, the document is gone from the list
+        let doc = self.get(id)?;
+        // Row first: if removing the file fails, the document is gone from the list
         // and the leftover file is harmless.
-        self.save_index(&index)?;
+        self.db
+            .lock()?
+            .execute("DELETE FROM knowledge WHERE id = ?1", [id])?;
         match fs::remove_file(self.file_path(&doc)) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e.into()),
             _ => Ok(()),
@@ -212,9 +262,7 @@ impl KnowledgeStore {
 
     /// Where the stored copy of a document lives, for the code that will read it later.
     pub fn path_of(&self, id: &str) -> Result<PathBuf> {
-        let index = self.load_index()?;
-        let pos = Self::position(&index, id)?;
-        Ok(self.file_path(&index[pos]))
+        Ok(self.file_path(&self.get(id)?))
     }
 }
 
@@ -270,7 +318,11 @@ mod tests {
     }
 
     fn store(dir: &tempfile::TempDir) -> KnowledgeStore {
-        KnowledgeStore::with_clock(dir.path().join("knowledge"), counter())
+        KnowledgeStore::with_clock(
+            Db::open_in_memory().unwrap(),
+            dir.path().join("knowledge"),
+            counter(),
+        )
     }
 
     fn stored(dir: &tempfile::TempDir, file: &str) -> PathBuf {
@@ -463,24 +515,13 @@ mod tests {
     }
 
     #[test]
-    fn list_sorts_by_time_even_when_the_index_is_out_of_order() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-        s.import("a.txt", b"a").unwrap();
-        s.import("b.txt", b"b").unwrap();
-        let path = stored(&dir, "index.json");
-        let mut index: Vec<KnowledgeDoc> =
-            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        index.reverse();
-        fs::write(&path, serde_json::to_string(&index).unwrap()).unwrap();
-        let names: Vec<_> = s.list().unwrap().into_iter().map(|d| d.name).collect();
-        assert_eq!(names, vec!["b.txt", "a.txt"]);
-    }
-
-    #[test]
     fn ids_stay_unique_and_the_newest_stays_first_when_the_clock_does_not_advance() {
         let dir = tempfile::tempdir().unwrap();
-        let s = KnowledgeStore::with_clock(dir.path().join("knowledge"), || 5000);
+        let s = KnowledgeStore::with_clock(
+            Db::open_in_memory().unwrap(),
+            dir.path().join("knowledge"),
+            || 5000,
+        );
         let a = s.import("a.txt", b"a").unwrap();
         let b = s.import("b.txt", b"b").unwrap();
         assert_ne!(a.id, b.id);
@@ -548,26 +589,58 @@ mod tests {
             );
         }
         assert_eq!(fs::read_to_string(victim).unwrap(), "keep me");
-        assert!(stored(&dir, "index.json").exists());
         assert_eq!(s.list().unwrap().len(), 1);
     }
 
     #[test]
-    fn corrupt_index_is_reported_instead_of_silently_emptied() {
+    fn documents_survive_reopening_the_database() {
         let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-        s.import("a.txt", b"x").unwrap();
-        fs::write(stored(&dir, "index.json"), "{ not json").unwrap();
-        assert!(matches!(s.list(), Err(KnowledgeError::Index(_))));
-        // A broken index must not let an import overwrite it with a fresh one.
+        let files = dir.path().join("files");
+        let doc = KnowledgeStore::new(Db::open(dir.path()).unwrap(), &files)
+            .import("CV.docx", b"data")
+            .unwrap();
+        let again = KnowledgeStore::new(Db::open(dir.path()).unwrap(), &files);
+        assert_eq!(again.list().unwrap(), vec![doc.clone()]);
+        assert_eq!(fs::read(again.path_of(&doc.id).unwrap()).unwrap(), b"data");
+    }
+
+    #[test]
+    fn a_failed_database_write_leaves_no_orphan_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open_in_memory().unwrap();
+        let s = KnowledgeStore::with_clock(db.clone(), dir.path().join("knowledge"), || 7);
+        // The id lookup works but every insert is refused, as if the disk were full.
+        db.lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER refuse BEFORE INSERT ON knowledge
+                 BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+            )
+            .unwrap();
         assert!(matches!(
-            s.import("b.txt", b"x"),
-            Err(KnowledgeError::Index(_))
+            s.import("a.txt", b"x"),
+            Err(KnowledgeError::Db(_))
         ));
-        assert_eq!(
-            fs::read_to_string(stored(&dir, "index.json")).unwrap(),
-            "{ not json"
-        );
+        let leftovers = fs::read_dir(dir.path().join("knowledge")).unwrap().count();
+        assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn kinds_have_distinct_database_names_that_read_back() {
+        for kind in [
+            KnowledgeKind::Pdf,
+            KnowledgeKind::Docx,
+            KnowledgeKind::Markdown,
+            KnowledgeKind::Text,
+        ] {
+            assert_eq!(KnowledgeKind::from_db_name(kind.db_name()), Some(kind));
+            // The database name is also the serde name.
+            assert_eq!(
+                serde_json::to_string(&kind).unwrap(),
+                format!("\"{}\"", kind.db_name())
+            );
+        }
+        assert_eq!(KnowledgeKind::from_db_name("exe"), None);
     }
 
     #[test]

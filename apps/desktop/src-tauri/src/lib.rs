@@ -24,6 +24,7 @@ use tauri_plugin_store::StoreExt;
 mod knowledge;
 mod listening;
 mod permissions;
+mod storage;
 
 const OVERLAY: &str = "overlay";
 const STORE_FILE: &str = "settings.json";
@@ -406,11 +407,19 @@ pub fn run() {
             restore_window_state(app.handle());
             app.manage(WindowSaver(spawn_window_saver(app.handle().clone())));
 
-            let scripts_dir = app.path().app_data_dir()?.join("scripts");
-            app.manage(Scripts(Mutex::new(ScriptStore::new(scripts_dir))));
-            let knowledge_dir = app.path().app_data_dir()?.join("knowledge");
+            let data_dir = storage::data_dir(app.handle())?;
+            let db = storage::open_db(&data_dir)?;
+            let script_store = ScriptStore::new(db.clone());
+            // Scripts written before the database existed lived in files under the app data folder.
+            match script_store.import_legacy(&app.path().app_data_dir()?.join("scripts")) {
+                Ok(0) => {}
+                Ok(n) => eprintln!("{n} script(s) moved into the database"),
+                Err(e) => eprintln!("old scripts not imported: {e}"),
+            }
+            app.manage(Scripts(Mutex::new(script_store)));
             app.manage(knowledge::Knowledge(Mutex::new(KnowledgeStore::new(
-                knowledge_dir,
+                db,
+                data_dir.join("knowledge"),
             ))));
             app.manage(listening::Listening::default());
             seed_sample_script(app.handle(), &app.state::<Scripts>());
