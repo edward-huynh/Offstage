@@ -15,8 +15,8 @@
       {
         "label": "main",
         "title": "Offstage",
-        "width": 1040,
-        "height": 700,
+        "width": 1280,
+        "height": 840,
         "minWidth": 860,
         "minHeight": 560,
         "center": true,
