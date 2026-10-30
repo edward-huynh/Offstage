@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TranscriptPanel } from "../TranscriptPanel";
 import {
   captureProtection,
@@ -54,6 +54,10 @@ export function OverlayApp() {
   }, [cfg]);
 
   useAutoScroll(scroller, playing, cfg?.scroll_speed ?? 0);
+
+  // The overlay re-renders on every caption line and model-download tick, so the paragraph
+  // split (and its regex over the whole script) is kept until the script itself changes.
+  const paragraphs = useMemo(() => play.body.split(/\n{2,}/), [play.body]);
 
   // A new session starts paused, with the captions only in an interview.
   useEffect(() => {
@@ -137,10 +141,20 @@ export function OverlayApp() {
     };
   }, []);
 
+  // Holding a key changes the config on every repeat, so the handler must not depend on it:
+  // re-registering the listener dozens of times a second is pure overhead. Everything it
+  // reads lives in refs, and config changes go through functional updates.
+  const live = useRef({ cfg, captionsOpen, scroller, toggleSource });
+  useEffect(() => {
+    live.current = { cfg, captionsOpen, scroller, toggleSource };
+  });
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const { cfg, captionsOpen, scroller, toggleSource } = live.current;
       if (!cfg) return;
-      const set = (patch: Partial<OverlayConfig>) => setCfg({ ...cfg, ...patch });
+      const set = (patch: Partial<OverlayConfig>) =>
+        setCfg((c) => (c ? { ...c, ...patch } : c));
       switch (e.key) {
         case " ":
           e.preventDefault();
@@ -196,7 +210,7 @@ export function OverlayApp() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cfg, captionsOpen, toggleSource, scroller]);
+  }, []);
 
   // Nothing to show until the overlay has its settings and a session to play.
   if (!cfg || !play.session) return null;
@@ -265,7 +279,7 @@ export function OverlayApp() {
           style={{ fontSize: cfg.font_size }}
         >
           <div className="pad" style={{ height: `${cfg.reading_line * 100}%` }} />
-          {play.body.split(/\n{2,}/).map((p, i) => (
+          {paragraphs.map((p, i) => (
             <p key={i}>{p}</p>
           ))}
           <div className="pad" />
@@ -282,10 +296,10 @@ export function OverlayApp() {
           progress={listening.progress}
           latencyMs={listening.latencyMs}
           permissionIssue={listening.permissionIssue}
-          onToggle={(speaker) => void toggleSource(speaker)}
-          onOpenSettings={() => void listening.openSettings()}
-          onRetryPermission={() => void listening.retryPermission()}
-          onDownload={() => void listening.startDownload()}
+          onToggle={toggleSource}
+          onOpenSettings={listening.openSettings}
+          onRetryPermission={listening.retryPermission}
+          onDownload={listening.startDownload}
           onCancel={listening.cancel}
           onClear={listening.clear}
           onDismissError={listening.dismissError}
