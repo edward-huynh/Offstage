@@ -25,6 +25,7 @@ export function SearchDialog({ open, onClose, onPick }: Props) {
   const listId = useId();
   const returnFocusTo = useRef<Element | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLDivElement>(null);
 
   // Focus the box when it opens, and give focus back to whatever opened it when it closes.
   // The input is focused here rather than with `autoFocus`, which would run first and hide the opener.
@@ -108,6 +109,7 @@ export function SearchDialog({ open, onClose, onPick }: Props) {
       }}
     >
       <div
+        ref={box}
         className="mn-search-box"
         role="dialog"
         aria-modal="true"
@@ -116,6 +118,22 @@ export function SearchDialog({ open, onClose, onPick }: Props) {
           if (e.key === "Escape") {
             e.preventDefault();
             onClose();
+            return;
+          }
+          // Keep Tab inside the modal: the window behind it is still marked aria-modal.
+          if (e.key !== "Tab" || !box.current) return;
+          const focusable = box.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]):not([tabindex="-1"]), input, [href], select, textarea',
+          );
+          if (focusable.length === 0) return;
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
           }
         }}
       >

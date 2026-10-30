@@ -10,6 +10,7 @@ import {
   saveConfig,
   setClickThrough,
   stopPlay,
+  type CaptureProtection,
   type OverlayConfig,
   type Speaker,
 } from "../tauri";
@@ -92,10 +93,11 @@ export function OverlayApp() {
     hotkeyFailures().then(setHotkeyIssues);
   }, []);
 
-  // Only a known problem is worth a warning. "unknown" and "best_effort" stay silent.
-  const [blackBox, setBlackBox] = useState(false);
+  // Split-screen protection is the product's promise, so the overlay says how well it holds.
+  // "unknown" stays quiet: it means the platform was not probed, not that sharing leaks.
+  const [protection, setProtection] = useState<CaptureProtection>("unknown");
   useEffect(() => {
-    captureProtection().then((p) => setBlackBox(p === "black_box"));
+    captureProtection().then(setProtection);
   }, []);
 
   // Global hotkeys arrive even when the overlay is not focused. They use functional
@@ -222,9 +224,7 @@ export function OverlayApp() {
     >
       <header className="bar" data-tauri-drag-region>
         <span className={playing ? "dot live" : "dot"} aria-hidden />
-        <span data-tauri-drag-region>
-          {interview ? "Interview" : playing ? "Đang chạy" : "Tạm dừng"}
-        </span>
+        {interview && <span data-tauri-drag-region>Interview</span>}
         {play.title && (
           <span className="script-title" title={play.title} data-tauri-drag-region>
             {play.title}
@@ -249,12 +249,38 @@ export function OverlayApp() {
             {hotkeyIssues.length} phím tắt toàn cục lỗi
           </span>
         )}
-        <span data-tauri-drag-region>{cfg.scroll_speed} px/s</span>
-        <span data-tauri-drag-region>{cfg.font_size}px</span>
-        <span data-tauri-drag-region>{Math.round(cfg.opacity * 100)}%</span>
+        {protection === "full" && (
+          <span
+            className="bar-note"
+            title="Cửa sổ này không xuất hiện khi bạn chia sẻ màn hình"
+            data-tauri-drag-region
+          >
+            Ẩn khỏi chia sẻ
+          </span>
+        )}
+        {(protection === "best_effort" || protection === "black_box") && (
+          <span
+            className="warn"
+            title="Hệ điều hành có thể vẫn cho người khác thấy cửa sổ này khi bạn chia sẻ màn hình"
+            data-tauri-drag-region
+          >
+            Có thể bị thấy
+          </span>
+        )}
+        <button
+          type="button"
+          className="bar-btn"
+          onClick={() => setPlaying((p) => !p)}
+          aria-label={playing ? "Tạm dừng (Space)" : "Chạy (Space)"}
+          title={playing ? "Tạm dừng (Space)" : "Chạy (Space)"}
+          disabled={cfg.click_through}
+        >
+          {playing ? "Tạm dừng" : "Chạy"}
+          {!playing && <kbd>Space</kbd>}
+        </button>
       </header>
 
-      {blackBox && (
+      {protection === "black_box" && (
         <p className="notice" role="status">
           Windows bản cũ: khi chia sẻ màn hình, người xem sẽ thấy ô đen thay cho cửa sổ này. Cần Windows 10
           bản 2004 trở lên.

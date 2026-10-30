@@ -93,7 +93,7 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
         <article className="mn-card" aria-labelledby="home-interview">
           <header>
             <h2 id="home-interview">Interview</h2>
-            <p>Nghe cuộc phỏng vấn, hiện phụ đề trực tiếp và gợi ý trả lời bằng AI.</p>
+            <p>Nghe cuộc phỏng vấn và hiện phụ đề trực tiếp.</p>
           </header>
 
           <ul className="mn-checks">
@@ -131,16 +131,16 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
           )}
           {model.error && <p className="mn-error">{model.error}</p>}
 
-          <p className="mn-fineprint">Trợ lý AI trả lời chưa có ở bản này. Phụ đề trực tiếp đã chạy.</p>
+          <p className="mn-fineprint">Trợ lý AI gợi ý câu trả lời sẽ có ở bản sau.</p>
 
           <footer>
             <button
               type="button"
-              className="mn-btn primary"
+              className="mn-btn secondary"
               disabled={!model.installed || starting !== null}
               onClick={() => void play({ mode: "interview", content_id: null })}
             >
-              {starting === "interview" ? "Đang mở…" : "Play with AI"}
+              {starting === "interview" ? "Đang mở…" : "Nghe và hiện phụ đề"}
             </button>
           </footer>
         </article>
