@@ -1,21 +1,17 @@
 //! App settings: speech language, interview sources and screen-share hiding.
-//! Stored in the same store file as the overlay config, under their own key.
+//! Stored in the local database, under their own key.
 
 use offstage_core::{settings::AppSettings, HotkeyAction};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
-use tauri_plugin_store::StoreExt;
 
-use crate::{play::MAIN, STORE_FILE};
+use crate::{play::MAIN, storage};
 
 const SETTINGS_KEY: &str = "app_settings";
 
 /// Reads the saved settings. A missing or unreadable value yields the defaults.
 pub fn load(app: &AppHandle) -> Result<AppSettings, String> {
-    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
-    Ok(store
-        .get(SETTINGS_KEY)
-        .and_then(|v| serde_json::from_value::<AppSettings>(v).ok())
+    Ok(storage::get::<AppSettings>(app, SETTINGS_KEY)?
         .unwrap_or_default()
         .clamped())
 }
@@ -40,9 +36,7 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
 #[tauri::command]
 pub fn update_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
     let settings = settings.clamped();
-    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
-    let value = serde_json::to_value(settings).map_err(|e| e.to_string())?;
-    store.set(SETTINGS_KEY, value);
+    storage::set(&app, SETTINGS_KEY, &settings)?;
     apply_capture_protection(&app, settings.hide_main_from_capture)?;
     Ok(settings)
 }

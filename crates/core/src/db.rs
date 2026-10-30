@@ -128,6 +128,36 @@ impl Db {
             .execute("DELETE FROM kv WHERE key = ?1", [key])?;
         Ok(())
     }
+
+    /// Copies the entries of a JSON object file (the settings file used before the database)
+    /// into the key-value table, once. Returns how many were copied. `done_key` is the flag
+    /// that remembers it was done. A key that already has a value keeps it, and the file is
+    /// left where it is. A missing file counts as nothing to copy. When the file cannot be
+    /// parsed nothing is marked as done, so the next start tries again.
+    pub fn import_json_object(&self, path: &Path, done_key: &str) -> Result<usize> {
+        if self.kv_get::<bool>(done_key)?.unwrap_or(false) {
+            return Ok(0);
+        }
+        let entries: serde_json::Map<String, serde_json::Value> = match fs::read_to_string(path) {
+            Ok(text) => serde_json::from_str(&text)?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => serde_json::Map::new(),
+            Err(e) => return Err(e.into()),
+        };
+        let mut copied = 0;
+        {
+            let mut conn = self.lock()?;
+            let tx = conn.transaction()?;
+            for (key, value) in &entries {
+                copied += tx.execute(
+                    "INSERT OR IGNORE INTO kv (key, value) VALUES (?1, ?2)",
+                    (key, serde_json::to_string(value)?),
+                )?;
+            }
+            tx.commit()?;
+        }
+        self.kv_set(done_key, &true)?;
+        Ok(copied)
+    }
 }
 
 /// Applies the migrations the database has not seen yet, each in its own transaction
@@ -244,6 +274,61 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         db.kv_set("k", &"text").unwrap();
         assert!(matches!(db.kv_get::<u32>("k"), Err(DbError::Json(_))));
+    }
+
+    #[test]
+    fn a_json_object_file_is_copied_once_without_overwriting_existing_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        fs::write(&file, r#"{"a":{"x":1},"b":true,"c":"keep old"}"#).unwrap();
+        let db = Db::open_in_memory().unwrap();
+        db.kv_set("c", &"already here").unwrap();
+
+        assert_eq!(db.import_json_object(&file, "done").unwrap(), 2);
+        assert_eq!(
+            db.kv_get::<serde_json::Value>("a").unwrap(),
+            Some(serde_json::json!({"x": 1}))
+        );
+        assert_eq!(db.kv_get::<bool>("b").unwrap(), Some(true));
+        assert_eq!(
+            db.kv_get::<String>("c").unwrap().as_deref(),
+            Some("already here")
+        );
+
+        // The second start copies nothing, even if the file changed or the value was removed.
+        db.kv_delete("b").unwrap();
+        assert_eq!(db.import_json_object(&file, "done").unwrap(), 0);
+        assert_eq!(db.kv_get::<bool>("b").unwrap(), None);
+        // The old file is left alone.
+        assert!(file.exists());
+    }
+
+    #[test]
+    fn a_missing_json_object_file_is_nothing_to_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open_in_memory().unwrap();
+        assert_eq!(
+            db.import_json_object(&dir.path().join("none.json"), "done")
+                .unwrap(),
+            0
+        );
+        assert_eq!(db.kv_get::<bool>("done").unwrap(), Some(true));
+    }
+
+    #[test]
+    fn an_unreadable_json_object_file_is_reported_and_retried_next_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        fs::write(&file, "{ not json").unwrap();
+        let db = Db::open_in_memory().unwrap();
+        assert!(matches!(
+            db.import_json_object(&file, "done"),
+            Err(DbError::Json(_))
+        ));
+        assert_eq!(db.kv_get::<bool>("done").unwrap(), None);
+
+        fs::write(&file, r#"{"a":1}"#).unwrap();
+        assert_eq!(db.import_json_object(&file, "done").unwrap(), 1);
     }
 
     #[test]

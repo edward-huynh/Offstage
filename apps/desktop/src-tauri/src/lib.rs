@@ -19,7 +19,6 @@ use tauri::{
 };
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
-use tauri_plugin_store::StoreExt;
 
 mod knowledge;
 mod listening;
@@ -29,7 +28,6 @@ mod settings;
 mod storage;
 
 pub(crate) const OVERLAY: &str = "overlay";
-const STORE_FILE: &str = "settings.json";
 const CONFIG_KEY: &str = "overlay_config";
 const HOTKEY_EVENT: &str = "hotkey";
 const CLICK_THROUGH_EVENT: &str = "click_through";
@@ -179,17 +177,15 @@ async fn import_script(
 }
 
 /// On the very first run, adds one sample script so the teleprompter is not empty.
-/// Remembered in the settings store, so deleting every script later does not bring it back.
+/// Remembered in the database, so deleting every script later does not bring it back.
 fn seed_sample_script(app: &AppHandle, scripts: &Scripts) {
-    let Ok(settings) = app.store(STORE_FILE) else {
-        return;
-    };
-    if settings
-        .get(SCRIPTS_SEEDED_KEY)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        return;
+    match storage::get::<bool>(app, SCRIPTS_SEEDED_KEY) {
+        Ok(Some(true)) => return,
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("sample script not created: {e}");
+            return;
+        }
     }
     let result = with_scripts(&scripts.0, |s| {
         if s.list()?.is_empty() {
@@ -198,17 +194,18 @@ fn seed_sample_script(app: &AppHandle, scripts: &Scripts) {
         Ok(())
     });
     match result {
-        Ok(()) => settings.set(SCRIPTS_SEEDED_KEY, true),
+        Ok(()) => {
+            if let Err(e) = storage::set(app, SCRIPTS_SEEDED_KEY, &true) {
+                eprintln!("sample script flag not saved: {e}");
+            }
+        }
         Err(e) => eprintln!("sample script not created: {e}"),
     }
 }
 
 /// Reads the saved config. A missing or unreadable value yields the defaults.
 fn load_config(app: &AppHandle) -> Result<OverlayConfig, String> {
-    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
-    Ok(store
-        .get(CONFIG_KEY)
-        .and_then(|v| serde_json::from_value::<OverlayConfig>(v).ok())
+    Ok(storage::get::<OverlayConfig>(app, CONFIG_KEY)?
         .unwrap_or_default()
         .clamped())
 }
@@ -219,10 +216,7 @@ fn get_config(app: AppHandle) -> Result<OverlayConfig, String> {
 }
 
 fn save_config(app: &AppHandle, config: &OverlayConfig) -> Result<(), String> {
-    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
-    let value = serde_json::to_value(config).map_err(|e| e.to_string())?;
-    store.set(CONFIG_KEY, value);
-    Ok(())
+    storage::set(app, CONFIG_KEY, config)
 }
 
 #[tauri::command]
@@ -258,15 +252,7 @@ fn save_window_state(app: &AppHandle) {
     let Some(state) = overlay(app).and_then(|w| current_window_state(&w)) else {
         return;
     };
-    let saved = app
-        .store(STORE_FILE)
-        .map_err(|e| e.to_string())
-        .and_then(|store| {
-            let value = serde_json::to_value(state).map_err(|e| e.to_string())?;
-            store.set(WINDOW_KEY, value);
-            Ok(())
-        });
-    if let Err(e) = saved {
+    if let Err(e) = storage::set(app, WINDOW_KEY, &state) {
         eprintln!("window position not saved: {e}");
     }
 }
@@ -277,12 +263,7 @@ fn restore_window_state(app: &AppHandle) {
     let Some(window) = overlay(app) else {
         return;
     };
-    let Some(saved) = app
-        .store(STORE_FILE)
-        .ok()
-        .and_then(|store| store.get(WINDOW_KEY))
-        .and_then(|v| serde_json::from_value::<WindowState>(v).ok())
-    else {
+    let Some(saved) = storage::get::<WindowState>(app, WINDOW_KEY).ok().flatten() else {
         return;
     };
     // The work area excludes the menu bar, dock and taskbar.
@@ -437,7 +418,6 @@ fn hotkey_failures(failures: State<HotkeyFailures>) -> Vec<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
@@ -455,11 +435,19 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // The database comes first: the window position and the settings are read from it.
+            let data_dir = storage::data_dir(app.handle())?;
+            let db = storage::open_db(&data_dir)?;
+            match storage::import_legacy_settings(&db, app.handle()) {
+                Ok(0) => {}
+                Ok(n) => eprintln!("{n} setting(s) moved into the database"),
+                Err(e) => eprintln!("old settings not imported: {e}"),
+            }
+            app.manage(db.clone());
+
             restore_window_state(app.handle());
             app.manage(WindowSaver(spawn_window_saver(app.handle().clone())));
 
-            let data_dir = storage::data_dir(app.handle())?;
-            let db = storage::open_db(&data_dir)?;
             let script_store = ScriptStore::new(db.clone());
             // Scripts written before the database existed lived in files under the app data folder.
             match script_store.import_legacy(&app.path().app_data_dir()?.join("scripts")) {
