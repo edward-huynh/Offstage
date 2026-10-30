@@ -24,7 +24,8 @@ Open source (MIT), general purpose. Use cases we promote: presentations, intervi
 
 ## 3. Tech stack
 
-- **Shell**: Tauri v2 (Rust) with a React 18 + TypeScript (strict) + Vite overlay UI.
+- **Shell**: Tauri v2 (Rust) with a React 19 + TypeScript (strict) + Vite overlay UI.
+- **UI**: Tailwind CSS v4 with beUI (MIT, copied-in motion components) in `apps/desktop/src/components/motion`; the overlay keeps its own small CSS so it can stay transparent and frameless.
 - **Audio**: `cpal` 0.18 for the microphone and for loopback (a Core Audio tap on macOS 14.6+, WASAPI loopback on Windows), `rubato` to resample to 16 kHz. ScreenCaptureKit is the planned fallback for older macOS. VAD is an energy detector for now, Silero (ONNX) is still to come.
 - **STT**: `whisper-rs` (whisper.cpp), model `small` q5 by default, PhoWhisper option for Vietnamese.
 - **LLM local**: `llama-cpp-2`, 3–4B instruct models in Q4 (Qwen3 4B, Gemma 3 4B class). Check Hugging Face for current versions.
@@ -37,7 +38,10 @@ Open source (MIT), general purpose. Use cases we promote: presentations, intervi
 
 ```
 apps/desktop/                 Tauri app
-  src/                        React overlay UI (App.tsx, useAutoScroll.ts, tauri.ts)
+  src/                        React UI (main/, overlay/, hooks, tauri.ts)
+    components/motion/        vendored beUI components (button, card, input, radio...)
+    lib/                      vendored beUI helpers (ease, hooks, cn)
+    styles/theme.css          Tailwind v4 entry and the app's design tokens
   src-tauri/                  Rust shell: window, tray, commands
     tauri.conf.json           overlay window: transparent, alwaysOnTop, contentProtected
     capabilities/default.json window permissions

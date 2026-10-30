@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { FilePlus2, FileUp, Trash2 } from "lucide-react";
+import { Button } from "@/components/motion/button";
+import { Card, CardContent } from "@/components/motion/card";
+import { Input } from "@/components/motion/input";
+import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
+import { cn } from "@/lib/utils";
 import { type ImportReport, type KnowledgeKind } from "../tauri";
 import { useKnowledge } from "../useKnowledge";
+import { EmptyState, ErrorNote, Screen } from "./ui";
 
 /** Formats a document can be written in, instead of imported from a file. */
 type WrittenKind = Extract<KnowledgeKind, "markdown" | "text">;
@@ -90,95 +97,106 @@ export function Knowledge() {
   };
 
   return (
-    <section className="mn-screen">
-      <div className="mn-know-head">
-        <p className="mn-lead">
-          Tài liệu của bạn, như mô tả công việc, CV hay tiêu chí đánh giá. Thêm tệp .pdf, .docx, .md, .txt (tối đa 20 MB mỗi tệp)
-          hoặc tự gõ, dán nội dung vào.
+    <Screen>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
+          Tài liệu của bạn, như mô tả công việc, CV hay tiêu chí đánh giá. Thêm tệp .pdf, .docx,
+          .md, .txt (tối đa 20 MB mỗi tệp) hoặc tự gõ, dán nội dung vào.
         </p>
-        <div className="mn-know-actions">
-          <button type="button" className="mn-btn secondary" disabled={writing} onClick={() => openForm()}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" disabled={writing} onClick={openForm}>
+            <FilePlus2 className="size-4" />
             Tạo tài liệu
-          </button>
-          <button type="button" className="mn-btn primary" disabled={knowledge.importing} onClick={() => void add()}>
+          </Button>
+          <Button size="sm" disabled={knowledge.importing} onClick={() => void add()}>
+            <FileUp className="size-4" />
             {knowledge.importing ? "Đang thêm…" : "Thêm tệp"}
-          </button>
+          </Button>
         </div>
       </div>
 
-      <p className="mn-note-line">AI chưa đọc tài liệu: tính năng này đến ở bản sau. Hiện tại tài liệu chỉ được lưu trên máy bạn.</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        AI chưa đọc tài liệu: tính năng này đến ở bản sau. Hiện tại tài liệu chỉ được lưu trên máy
+        bạn.
+      </p>
 
-      {knowledge.error && (
-        <p className="mn-error" role="alert">
-          {knowledge.error}
-        </p>
-      )}
+      {knowledge.error && <ErrorNote>{knowledge.error}</ErrorNote>}
 
       {writing && (
         <form
-          className="mn-know-form"
+          className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4"
           onSubmit={(e) => {
             e.preventDefault();
             void save();
           }}
         >
-          <div className="mn-know-form-bar">
-            <div className="mn-seg" role="radiogroup" aria-label="Định dạng">
-              {FORMATS.map((f) => (
-                <button
-                  key={f.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={kind === f.value}
-                  className={kind === f.value ? "mn-seg-item is-selected" : "mn-seg-item"}
-                  onClick={() => setKind(f.value)}
-                >
-                  {f.label}
-                </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <RadioGroup
+              orientation="horizontal"
+              value={kind}
+              onValueChange={(value) => setKind(value as WrittenKind)}
+              aria-label="Định dạng"
+            >
+              {FORMATS.map((format) => (
+                <RadioGroupItem key={format.value} value={format.value} label={format.label} />
               ))}
-            </div>
-            <input
+            </RadioGroup>
+            <Input
               ref={titleRef}
-              className="mn-know-title"
+              className="min-w-48 flex-1"
+              classNames={{ field: "h-10 rounded-xl", input: "text-sm" }}
               value={title}
               maxLength={100}
               placeholder="Tên tài liệu"
               aria-label="Tên tài liệu"
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={setTitle}
             />
           </div>
+
           <textarea
-            className="mn-textarea mn-know-text"
+            className="mn-scroll min-h-56 resize-none rounded-xl border border-border bg-background p-4 font-sans text-[15px] leading-relaxed text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-border-strong"
             value={text}
-            placeholder={kind === "markdown" ? "Gõ hoặc dán nội dung Markdown…" : "Gõ hoặc dán nội dung…"}
+            placeholder={
+              kind === "markdown" ? "Gõ hoặc dán nội dung Markdown…" : "Gõ hoặc dán nội dung…"
+            }
             aria-label="Nội dung"
             spellCheck={false}
             onChange={(e) => setText(e.target.value)}
           />
-          <div className="mn-know-form-foot">
-            <span>{text.trim() === "" ? "Chưa có nội dung" : formatSize(new TextEncoder().encode(text).length)}</span>
-            <span className="mn-know-form-btns">
-              <button type="button" className="mn-btn secondary" disabled={saving} onClick={() => closeForm()}>
-                Huỷ
-              </button>
-              <button type="submit" className="mn-btn primary" disabled={saving || text.trim() === ""}>
-                {saving ? "Đang lưu…" : "Lưu tài liệu"}
-              </button>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+            <span>
+              {text.trim() === ""
+                ? "Chưa có nội dung"
+                : formatSize(new TextEncoder().encode(text).length)}
             </span>
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="secondary" size="sm" disabled={saving} onClick={closeForm}>
+                Huỷ
+              </Button>
+              <Button type="submit" size="sm" disabled={saving || text.trim() === ""}>
+                {saving ? "Đang lưu…" : "Lưu tài liệu"}
+              </Button>
+            </div>
           </div>
         </form>
       )}
 
       {report && (
-        <div className="mn-note mn-know-report" role="status">
-          {report.imported.length > 0 && <p>Đã thêm {report.imported.length} tài liệu.</p>}
+        <div
+          role="status"
+          className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm leading-relaxed text-muted-foreground"
+        >
+          {report.imported.length > 0 && (
+            <p className="text-foreground">Đã thêm {report.imported.length} tài liệu.</p>
+          )}
           {report.skipped.length > 0 && (
             <>
               <p>Bỏ qua {report.skipped.length} tệp:</p>
-              <ul>
+              <ul className="mt-1 list-disc space-y-1 pl-5">
                 {report.skipped.map((s, i) => (
                   <li key={`${s.name}-${i}`}>
-                    <strong>{s.name}</strong>: {s.reason}
+                    <strong className="font-medium text-foreground">{s.name}</strong>: {s.reason}
                   </li>
                 ))}
               </ul>
@@ -188,40 +206,65 @@ export function Knowledge() {
       )}
 
       {knowledge.docs.length === 0 ? (
-        <div className="mn-empty big mn-know-empty">
-          <p>Chưa có tài liệu nào.</p>
-          <button type="button" className="mn-btn secondary" disabled={knowledge.importing} onClick={() => void add()}>
-            Chọn tệp để thêm
-          </button>
-        </div>
+        <EmptyState
+          className="min-h-56"
+          action={
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={knowledge.importing}
+              onClick={() => void add()}
+            >
+              Chọn tệp để thêm
+            </Button>
+          }
+        >
+          Chưa có tài liệu nào.
+        </EmptyState>
       ) : (
-        <ul className="mn-know-list">
-          {knowledge.docs.map((doc) => {
-            const date = formatDate(doc.added_at);
-            const asking = confirming === doc.id;
-            return (
-              <li key={doc.id} className="mn-know-item">
-                <span className="mn-know-kind">{KIND_LABEL[doc.kind]}</span>
-                <span className="mn-know-name" title={doc.name}>
-                  {doc.name}
-                </span>
-                <span className="mn-know-meta">
-                  {formatSize(doc.size_bytes)}
-                  {date ? ` · ${date}` : ""}
-                </span>
-                <button
-                  type="button"
-                  className={asking ? "mn-btn danger" : "mn-btn secondary"}
-                  aria-label={`Xoá ${doc.name}`}
-                  onClick={() => void remove(doc.id)}
-                >
-                  {asking ? "Chắc chắn xoá?" : "Xoá"}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <Card className="bg-card">
+          <CardContent className="p-0">
+            <ul className="divide-y divide-border">
+              {knowledge.docs.map((doc) => {
+                const date = formatDate(doc.added_at);
+                const asking = confirming === doc.id;
+                return (
+                  <li
+                    key={doc.id}
+                    className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+                  >
+                    <span className="min-w-12 shrink-0 rounded-md bg-muted px-2 py-1 text-center text-[10px] font-bold tracking-wider text-muted-foreground">
+                      {KIND_LABEL[doc.kind]}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium" title={doc.name}>
+                      {doc.name}
+                    </span>
+                    <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                      {formatSize(doc.size_bytes)}
+                      {date ? ` · ${date}` : ""}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Xoá ${doc.name}`}
+                      className={cn(
+                        "shrink-0",
+                        asking
+                          ? "border-destructive/60 text-destructive hover:bg-destructive/10"
+                          : "text-muted-foreground",
+                      )}
+                      onClick={() => void remove(doc.id)}
+                    >
+                      <Trash2 className="size-3.5" />
+                      {asking ? "Chắc chắn xoá?" : "Xoá"}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
       )}
-    </section>
+    </Screen>
   );
 }

@@ -1,0 +1,106 @@
+/* Tailwind v4 + the beUI design tokens. Imported before the app's own CSS so the
+   preflight lands first and the overlay styles can still override it. */
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --color-background: #0b0e13;
+  --color-foreground: #e7edf4;
+
+  --color-card: #11161e;
+  --color-card-foreground: #e7edf4;
+
+  --color-popover: #151b24;
+  --color-popover-foreground: #e7edf4;
+
+  /* The stage cue-light amber is the one accent the product already had. */
+  --color-primary: #f2c94c;
+  --color-primary-foreground: #1a1403;
+
+  --color-secondary: #1a212b;
+  --color-secondary-foreground: #e7edf4;
+
+  --color-muted: #19202a;
+  --color-muted-foreground: #93a1b2;
+
+  --color-accent: #222c3a;
+  --color-accent-foreground: #e7edf4;
+
+  --color-destructive: #f08a7c;
+  --color-destructive-foreground: #200c08;
+
+  --color-success: #8fd694;
+  --color-warning: #f2c94c;
+  --color-info: #7cc4f0;
+
+  --color-border: #232b37;
+  --color-border-strong: #3a4759;
+  --color-input: #232b37;
+  --color-ring: #f2c94c;
+}
+
+:root {
+  /* Card's selected state paints its ring with this alias. */
+  --primary: var(--color-primary);
+  color-scheme: dark;
+}
+
+html[data-view="main"],
+html[data-view="main"] body,
+html[data-view="main"] #root {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+html[data-view="main"] body {
+  overflow: hidden;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Thin scrollbars that match the window instead of the platform default. */
+.mn-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+.mn-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.mn-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--color-border-strong);
+}
+.mn-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Tailwind v4 leaves buttons on the native arrow cursor; every control here is clickable. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+/* One title bar height for the window controls, the collapse button and the breadcrumb. */
+:root {
+  --mn-titlebar-height: 36px;
+  --mn-traffic-light-gutter: 0px;
+}
+html[data-platform="mac"] {
+  --mn-titlebar-height: 48px;
+  /* Three traffic lights, their gaps, and the same gap again to the content. */
+  --mn-traffic-light-gutter: 88px;
+}
+
+.mn-topbar,
+.mn-titlebar {
+  height: var(--mn-titlebar-height);
+}
+
+/* No rail means no room for the traffic lights, so reserve it in the title bar. */
+html[data-platform="mac"] .mn-main-collapsed header {
+  padding-left: var(--mn-traffic-light-gutter);
+}

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useLibrary } from "../useLibrary";
 import { useSidebarCollapsed } from "../useSidebarCollapsed";
+import { cn } from "@/lib/utils";
 import { Content } from "./Content";
 import { Home } from "./Home";
 import { Knowledge } from "./Knowledge";
@@ -24,22 +25,16 @@ export function MainApp() {
   const library = useLibrary();
   const [searchOpen, setSearchOpen] = useState(false);
 
-  // Ctrl/Cmd+K opens the search from anywhere in the window.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setSearchOpen((open) => !open);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  const openTitle = screen === "content" ? library.scripts.find((s) => s.id === library.current)?.title : null;
+  const openTitle =
+    screen === "content" ? library.scripts.find((s) => s.id === library.current)?.title : null;
 
   return (
-    <div className={collapsed ? "mn-app is-collapsed" : "mn-app"}>
+    <div
+      className={cn(
+        "grid h-full grid-rows-1 text-[14px] transition-[grid-template-columns] duration-200",
+        collapsed ? "grid-cols-[minmax(0,1fr)]" : "grid-cols-[252px_minmax(0,1fr)]",
+      )}
+    >
       <Sidebar
         screen={screen}
         onNavigate={setScreen}
@@ -48,14 +43,30 @@ export function MainApp() {
         onToggle={toggleSidebar}
         onSearch={() => setSearchOpen(true)}
       />
-      <div className="mn-pane">
-        <header className="mn-header" data-tauri-drag-region>
-          <h1 className="mn-header-title" data-tauri-drag-region>
-            {TITLES[screen]}
-            {openTitle && <span className="mn-header-sub"> · {openTitle}</span>}
+      <div
+        className={cn(
+          "flex h-full min-h-0 min-w-0 flex-col",
+          collapsed && "mn-main-collapsed",
+        )}
+      >
+        <header
+          className="mn-titlebar flex shrink-0 items-center border-b border-border px-6"
+          data-tauri-drag-region
+        >
+          <h1
+            className="flex min-w-0 items-center gap-2 text-sm"
+            data-tauri-drag-region
+          >
+            <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+            <span className="font-semibold text-foreground">Offstage</span>
+            <span className="text-muted-foreground/50">/</span>
+            <span className="text-muted-foreground">{TITLES[screen]}</span>
+            {openTitle && (
+              <span className="min-w-0 truncate text-muted-foreground/70">· {openTitle}</span>
+            )}
           </h1>
         </header>
-        <main className="mn-main">
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {screen === "home" && <Home onNavigate={setScreen} />}
           {screen === "content" && <Content library={library} />}
           {screen === "knowledge" && <Knowledge />}
@@ -64,7 +75,9 @@ export function MainApp() {
       </div>
       <SearchDialog
         open={searchOpen}
-        onClose={() => setSearchOpen(false)}
+        onOpenChange={setSearchOpen}
+        scripts={library.scripts}
+        onNavigate={setScreen}
         onPick={(id) => {
           setScreen("content");
           void library.select(id);

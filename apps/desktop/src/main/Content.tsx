@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
+import { FilePlus2, Trash2, Upload } from "lucide-react";
+import { Button } from "@/components/motion/button";
+import { Input } from "@/components/motion/input";
+import { cn } from "@/lib/utils";
 import type { Library } from "../useLibrary";
+import { EmptyState, ErrorNote, Screen } from "./ui";
 
 const SAVE_LABEL = { saved: "Đã lưu", saving: "Đang lưu…", unsaved: "Chưa lưu" } as const;
 /** How long "delete" waits for a second click before it goes back to normal. */
@@ -44,69 +49,93 @@ export function Content({ library: scripts }: { library: Library }) {
   const edited = open ? lastEdited(open.updated_at) : null;
 
   return (
-    <section className="mn-screen fill">
-      {scripts.error && (
-        <p className="mn-error" role="alert">
-          {scripts.error}
-        </p>
-      )}
+    <Screen scroll={false} className="gap-3">
+      {scripts.error && <ErrorNote>{scripts.error}</ErrorNote>}
 
       {empty ? (
-        <div className="mn-empty big">
-          <p>Chưa có nội dung nào.</p>
-          <div className="mn-actions">
-            <button type="button" className="mn-btn primary" onClick={() => void scripts.create()}>
-              Content mới
-            </button>
-            <button type="button" className="mn-btn secondary" onClick={() => void scripts.importFile()}>
-              Nhập tệp .txt hoặc .md
-            </button>
-          </div>
-        </div>
+        <EmptyState
+          className="flex-1"
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button onClick={() => void scripts.create()}>
+                <FilePlus2 className="size-4" />
+                Content mới
+              </Button>
+              <Button variant="secondary" onClick={() => void scripts.importFile()}>
+                <Upload className="size-4" />
+                Nhập tệp .txt hoặc .md
+              </Button>
+            </div>
+          }
+        >
+          Chưa có nội dung nào. Tạo một nội dung mới hoặc nhập tệp để bắt đầu.
+        </EmptyState>
       ) : open ? (
-        <div className="mn-editor-pane">
-          <div className="mn-editor-bar">
-            <input
-              className="mn-title-input"
+        <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-2xl border border-border bg-card p-4">
+          <div className="flex items-center gap-2">
+            <Input
+              className="min-w-0 flex-1"
+              classNames={{
+                field: "h-12 rounded-xl border-transparent bg-transparent",
+                input: "px-2 text-lg font-semibold",
+              }}
               value={title}
               aria-label="Tên nội dung"
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={setTitle}
               onBlur={commitTitle}
               onKeyDown={(e) => {
                 if (e.key === "Enter") e.currentTarget.blur();
-                if (e.key === "Escape") setTitle(open.title);
+                if (e.key === "Escape") {
+                  setTitle(open.title);
+                  e.currentTarget.blur();
+                }
               }}
             />
-            <button
-              type="button"
-              className={confirming ? "mn-btn danger" : "mn-btn secondary"}
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(
+                "shrink-0",
+                confirming
+                  ? "border-destructive/60 text-destructive hover:bg-destructive/10"
+                  : "text-muted-foreground",
+              )}
               onClick={() => {
                 if (confirming) void scripts.remove(open.id);
                 else setConfirming(true);
               }}
             >
+              <Trash2 className="size-3.5" />
               {confirming ? "Chắc chắn xoá?" : "Xoá"}
-            </button>
+            </Button>
           </div>
+
           <textarea
-            className="mn-textarea"
+            className="mn-scroll min-h-0 flex-1 resize-none rounded-xl border border-border bg-background p-4 font-sans text-[15px] leading-relaxed text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-border-strong"
             value={scripts.body}
             aria-label="Nội dung"
             placeholder="Gõ hoặc dán nội dung. Ngắt đoạn bằng một dòng trống: mỗi đoạn thành một khối khi đọc."
             onChange={(e) => scripts.edit(e.target.value)}
           />
-          <div className="mn-editor-foot">
+
+          <footer className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
             <span>
               {wordCount(scripts.body)} từ{edited ? ` · sửa lần cuối ${edited}` : ""}
             </span>
-            <span className={`mn-save ${scripts.saveState}`}>{SAVE_LABEL[scripts.saveState]}</span>
-          </div>
+            <span
+              className={cn(
+                "font-medium",
+                scripts.saveState === "saved" && "text-success",
+                scripts.saveState === "unsaved" && "text-primary",
+              )}
+            >
+              {SAVE_LABEL[scripts.saveState]}
+            </span>
+          </footer>
         </div>
       ) : (
-        <div className="mn-empty big">
-          <p>Chọn một nội dung ở thanh bên để sửa.</p>
-        </div>
+        <EmptyState className="flex-1">Chọn một nội dung ở thanh bên để sửa.</EmptyState>
       )}
-    </section>
+    </Screen>
   );
 }
