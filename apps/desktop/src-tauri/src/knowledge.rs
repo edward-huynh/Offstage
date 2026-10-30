@@ -5,7 +5,7 @@ use std::{
     fs::{self, File},
     io::Read,
     path::Path,
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use offstage_core::knowledge::{
@@ -16,8 +16,9 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
 /// The document storage. The lock keeps two commands from interleaving their
-/// read-modify-write of the index.
-pub struct Knowledge(pub Mutex<KnowledgeStore>);
+/// read-modify-write of the index. The `Arc` lets a command hand the store to the blocking
+/// pool, so file reads and writes never run on the window's event loop.
+pub struct Knowledge(pub Arc<Mutex<KnowledgeStore>>);
 
 /// A file that was not imported, and why, in words the user can read.
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -34,24 +35,25 @@ pub struct ImportReport {
 }
 
 fn with_store<T>(
-    knowledge: &Knowledge,
+    store: &Mutex<KnowledgeStore>,
     op: impl FnOnce(&KnowledgeStore) -> Result<T, KnowledgeError>,
 ) -> Result<T, String> {
-    let store = knowledge
-        .0
+    let store = store
         .lock()
         .map_err(|_| "document storage is unavailable".to_owned())?;
     op(&store).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn list_knowledge(knowledge: State<Knowledge>) -> Result<Vec<KnowledgeDoc>, String> {
-    with_store(&knowledge, |s| s.list())
+pub async fn list_knowledge(knowledge: State<'_, Knowledge>) -> Result<Vec<KnowledgeDoc>, String> {
+    let store = knowledge.0.clone();
+    crate::off_main(move || with_store(&store, |s| s.list())).await
 }
 
 #[tauri::command]
-pub fn delete_knowledge(knowledge: State<Knowledge>, id: String) -> Result<(), String> {
-    with_store(&knowledge, |s| s.delete(&id))
+pub async fn delete_knowledge(knowledge: State<'_, Knowledge>, id: String) -> Result<(), String> {
+    let store = knowledge.0.clone();
+    crate::off_main(move || with_store(&store, |s| s.delete(&id))).await
 }
 
 /// Lets the user pick any number of documents and copies them into the store.
@@ -88,7 +90,7 @@ pub async fn import_knowledge(
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let result = read_document(&path, &name)
-            .and_then(|bytes| with_store(&knowledge, |s| s.import(&name, &bytes)));
+            .and_then(|bytes| with_store(&knowledge.0, |s| s.import(&name, &bytes)));
         match result {
             Ok(doc) => report.imported.push(doc),
             Err(reason) => report.skipped.push(SkippedFile { name, reason }),

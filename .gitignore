@@ -25,3 +25,8 @@ apps/desktop/src-tauri/gen/
 
 # Local artifacts
 Offstage.zip
+
+# Design skill installed per machine (`npx impeccable install --providers=opencode`):
+# includes a ~17 MB per-platform engine binary, so it is not committed
+.opencode/skills/impeccable/
+.opencode/commands/impeccable.md

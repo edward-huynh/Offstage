@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { DownloadProgress, Line } from "./useListening";
 import type { ModelInfo, PrivacyPane, Speaker } from "./tauri";
 
@@ -33,8 +33,12 @@ const PERMISSION_HELP: Record<PrivacyPane, string> = {
 
 const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
 
-/** Live captions at the bottom of the overlay, over the script, so the script never moves. */
-export function TranscriptPanel({
+/**
+ * Live captions at the bottom of the overlay, over the script, so the script never moves.
+ * Memoised: the overlay re-renders on every script change and download tick, and the panel
+ * only has new work when a line or its own state arrives.
+ */
+export const TranscriptPanel = memo(function TranscriptPanel({
   lines,
   active,
   busy,
@@ -146,4 +150,4 @@ export function TranscriptPanel({
       </ol>
     </section>
   );
-}
+});

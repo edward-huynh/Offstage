@@ -108,19 +108,24 @@ export function useListening(panelOpen: boolean) {
     return () => window.clearInterval(id);
   }, [panelOpen, listening, refreshStatus]);
 
-  /** Turns one source on or off. A missing model leads to the download offer instead of an error. */
-  const toggle = useCallback(
-    async (speaker: Speaker) => {
+  /**
+   * Turns one source on or off. A missing model leads to the download offer instead of an
+   * error. Resolves to `false` when the model is missing, since no other source can start either.
+   */
+  const setSource = useCallback(
+    async (speaker: Speaker, on: boolean): Promise<boolean> => {
       setError(null);
       setPermissionIssue(null);
       setBusy(speaker);
+      let modelPresent = true;
       try {
-        if (active[speaker]) await stopListening(speaker);
-        else await startListening(speaker);
+        if (on) await startListening(speaker);
+        else await stopListening(speaker);
       } catch (e) {
         const message = errorMessage(e);
         const denied = deniedPermission(message);
         if (message === MODEL_MISSING) {
+          modelPresent = false;
           waitingForModel.current = speaker;
           setNeedsModel(true);
         } else if (denied) {
@@ -132,8 +137,21 @@ export function useListening(panelOpen: boolean) {
         setBusy(null);
         await refreshStatus();
       }
+      return modelPresent;
     },
-    [active, refreshStatus],
+    [refreshStatus],
+  );
+
+  const toggle = useCallback(async (speaker: Speaker) => void (await setSource(speaker, !active[speaker])), [active, setSource]);
+
+  /** Turns on every given source, one after the other. One that fails does not stop the rest. */
+  const startAll = useCallback(
+    async (speakers: Speaker[]) => {
+      for (const speaker of speakers) {
+        if (!(await setSource(speaker, true))) break;
+      }
+    },
+    [setSource],
   );
 
   const startDownload = useCallback(async () => {
@@ -186,6 +204,7 @@ export function useListening(panelOpen: boolean) {
     latencyMs,
     permissionIssue,
     toggle,
+    startAll,
     openSettings,
     retryPermission,
     startDownload,

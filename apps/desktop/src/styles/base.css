@@ -1,0 +1,22 @@
+:root {
+  --ink: #e6edf1;
+  --ink-dim: #b4c4cf;
+  --glass: 28 44 58; /* deep harbour slate */
+  --cue: #f2c94c; /* stage cue-light amber */
+  --font: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+body { font-family: var(--font); color: var(--ink); }
+
+/* Respect the OS setting: transitions are decoration here, never information. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

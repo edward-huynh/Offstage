@@ -13,6 +13,24 @@
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
+        "title": "Offstage",
+        "width": 1280,
+        "height": 840,
+        "minWidth": 860,
+        "minHeight": 560,
+        "center": true,
+        "resizable": true,
+        "decorations": true,
+        "contentProtected": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 18,
+          "y": 20
+        }
+      },
+      {
         "label": "overlay",
         "title": "Offstage",
         "width": 720,
@@ -27,7 +45,8 @@
         "skipTaskbar": true,
         "visibleOnAllWorkspaces": true,
         "contentProtected": true,
-        "resizable": true
+        "resizable": true,
+        "visible": false
       }
     ],
     "security": {

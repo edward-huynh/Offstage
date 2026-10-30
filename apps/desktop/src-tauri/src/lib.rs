@@ -3,13 +3,13 @@ use std::{
     str::FromStr,
     sync::{
         mpsc::{self, RecvTimeoutError},
-        Mutex,
+        Arc, Mutex,
     },
     time::Duration,
 };
 
 use offstage_core::knowledge::KnowledgeStore;
-use offstage_core::scripts::{self, ScriptError, ScriptMeta, ScriptStore};
+use offstage_core::scripts::{self, ScriptError, ScriptHit, ScriptMeta, ScriptStore};
 use offstage_core::{CaptureProtection, HotkeyAction, OverlayConfig, WindowState};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
@@ -24,9 +24,11 @@ use tauri_plugin_store::StoreExt;
 mod knowledge;
 mod listening;
 mod permissions;
+mod play;
+mod settings;
 mod storage;
 
-const OVERLAY: &str = "overlay";
+pub(crate) const OVERLAY: &str = "overlay";
 const STORE_FILE: &str = "settings.json";
 const CONFIG_KEY: &str = "overlay_config";
 const HOTKEY_EVENT: &str = "hotkey";
@@ -49,52 +51,91 @@ struct ClickThroughMenu(CheckMenuItem<Wry>);
 struct WindowSaver(mpsc::Sender<()>);
 
 /// The script storage. The lock keeps two commands from interleaving their
-/// read-modify-write of the index.
-struct Scripts(Mutex<ScriptStore>);
+/// read-modify-write of the index. The `Arc` lets a command hand the store to the blocking
+/// pool, so file reads and writes never run on the window's event loop.
+struct Scripts(Arc<Mutex<ScriptStore>>);
 
 fn with_scripts<T>(
-    scripts: &Scripts,
+    store: &Mutex<ScriptStore>,
     op: impl FnOnce(&ScriptStore) -> Result<T, ScriptError>,
 ) -> Result<T, String> {
-    let store = scripts
-        .0
+    let store = store
         .lock()
         .map_err(|_| "script storage is unavailable".to_owned())?;
     op(&store).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn list_scripts(scripts: State<Scripts>) -> Result<Vec<ScriptMeta>, String> {
-    with_scripts(&scripts, |s| s.list())
+/// Runs blocking work off the main thread. Every command that touches the disk has to go
+/// through here: run on the main thread it stalls repaints and window events while it works.
+pub(crate) async fn off_main<T, F>(op: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(op)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn create_script(
-    scripts: State<Scripts>,
+async fn list_scripts(scripts: State<'_, Scripts>) -> Result<Vec<ScriptMeta>, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.list())).await
+}
+
+#[tauri::command]
+async fn create_script(
+    scripts: State<'_, Scripts>,
     title: String,
     body: String,
 ) -> Result<ScriptMeta, String> {
-    with_scripts(&scripts, |s| s.create(&title, &body))
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.create(&title, &body))).await
 }
 
 #[tauri::command]
-fn read_script(scripts: State<Scripts>, id: String) -> Result<String, String> {
-    with_scripts(&scripts, |s| s.read(&id))
+async fn read_script(scripts: State<'_, Scripts>, id: String) -> Result<String, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.read(&id))).await
 }
 
 #[tauri::command]
-fn save_script(scripts: State<Scripts>, id: String, body: String) -> Result<ScriptMeta, String> {
-    with_scripts(&scripts, |s| s.save(&id, &body))
+async fn save_script(
+    scripts: State<'_, Scripts>,
+    id: String,
+    body: String,
+) -> Result<ScriptMeta, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.save(&id, &body))).await
 }
 
 #[tauri::command]
-fn rename_script(scripts: State<Scripts>, id: String, title: String) -> Result<ScriptMeta, String> {
-    with_scripts(&scripts, |s| s.rename(&id, &title))
+async fn rename_script(
+    scripts: State<'_, Scripts>,
+    id: String,
+    title: String,
+) -> Result<ScriptMeta, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.rename(&id, &title))).await
+}
+
+/// Results the search dialog can show at once.
+const SEARCH_LIMIT: usize = 20;
+
+/// Searches titles and text, ignoring case and Vietnamese accents.
+#[tauri::command]
+async fn search_scripts(
+    scripts: State<'_, Scripts>,
+    query: String,
+) -> Result<Vec<ScriptHit>, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.search(&query, SEARCH_LIMIT))).await
 }
 
 #[tauri::command]
-fn delete_script(scripts: State<Scripts>, id: String) -> Result<(), String> {
-    with_scripts(&scripts, |s| s.delete(&id))
+async fn delete_script(scripts: State<'_, Scripts>, id: String) -> Result<(), String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.delete(&id))).await
 }
 
 /// Lets the user pick a `.txt` or `.md` file and stores it as a new script.
@@ -134,7 +175,7 @@ async fn import_script(
         .and_then(|s| s.to_str())
         .unwrap_or_default();
     let title = scripts::title_for_import(stem, &content);
-    with_scripts(&scripts, |s| s.create(&title, &content)).map(Some)
+    with_scripts(&scripts.0, |s| s.create(&title, &content)).map(Some)
 }
 
 /// On the very first run, adds one sample script so the teleprompter is not empty.
@@ -150,7 +191,7 @@ fn seed_sample_script(app: &AppHandle, scripts: &Scripts) {
     {
         return;
     }
-    let result = with_scripts(scripts, |s| {
+    let result = with_scripts(&scripts.0, |s| {
         if s.list()?.is_empty() {
             s.create(scripts::SAMPLE_TITLE, scripts::SAMPLE_BODY)?;
         }
@@ -287,7 +328,12 @@ fn spawn_window_saver(app: AppHandle) -> mpsc::Sender<()> {
     tx
 }
 
+/// Hides or shows the overlay during a play session. Outside a session there is nothing
+/// to show, so it does nothing.
 fn toggle_overlay(app: &AppHandle) {
+    if !play::is_playing(app) {
+        return;
+    }
     if let Some(w) = overlay(app) {
         if w.is_visible().unwrap_or(false) {
             let _ = w.hide();
@@ -395,6 +441,11 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
+            // The main window is the app. Closing it quits, and the overlay goes with it.
+            if window.label() == play::MAIN && matches!(event, WindowEvent::CloseRequested { .. }) {
+                save_window_state(window.app_handle());
+                window.app_handle().exit(0);
+            }
             if window.label() == OVERLAY
                 && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))
             {
@@ -416,17 +467,25 @@ pub fn run() {
                 Ok(n) => eprintln!("{n} script(s) moved into the database"),
                 Err(e) => eprintln!("old scripts not imported: {e}"),
             }
-            app.manage(Scripts(Mutex::new(script_store)));
-            app.manage(knowledge::Knowledge(Mutex::new(KnowledgeStore::new(
-                db,
-                data_dir.join("knowledge"),
+            app.manage(Scripts(Arc::new(Mutex::new(script_store))));
+            app.manage(knowledge::Knowledge(Arc::new(Mutex::new(
+                KnowledgeStore::new(db, data_dir.join("knowledge")),
             ))));
             app.manage(listening::Listening::default());
+            app.manage(play::Play::default());
             seed_sample_script(app.handle(), &app.state::<Scripts>());
 
             // Belt and braces: config already sets contentProtected, enforce it at runtime too.
             if let Some(w) = overlay(app.handle()) {
                 w.set_content_protected(true)?;
+            }
+            // The main window shows scripts and documents, so it is hidden from screen shares too.
+            // The setting can turn this off, so apply the saved choice instead of forcing it.
+            if let Err(e) = settings::apply_capture_protection(
+                app.handle(),
+                settings::load(app.handle())?.hide_main_from_capture,
+            ) {
+                eprintln!("could not apply capture protection to the main window: {e}");
             }
 
             let failures = register_hotkeys(app.handle());
@@ -443,7 +502,8 @@ pub fn run() {
                 }
             }
 
-            let toggle = MenuItem::with_id(app, "toggle", "Ẩn / Hiện", true, None::<&str>)?;
+            let open = MenuItem::with_id(app, "open", "Mở Offstage", true, None::<&str>)?;
+            let toggle = MenuItem::with_id(app, "toggle", "Ẩn / Hiện overlay", true, None::<&str>)?;
             let through = CheckMenuItem::with_id(
                 app,
                 "click_through",
@@ -453,13 +513,14 @@ pub fn run() {
                 None::<&str>,
             )?;
             let quit = MenuItem::with_id(app, "quit", "Thoát", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle, &through, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &toggle, &through, &quit])?;
             app.manage(ClickThroughMenu(through));
 
             let mut tray = TrayIconBuilder::new()
                 .tooltip("Offstage")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => play::show_main(app),
                     "toggle" => toggle_overlay(app),
                     "click_through" => toggle_click_through(app),
                     "quit" => {
@@ -487,6 +548,7 @@ pub fn run() {
             save_script,
             rename_script,
             delete_script,
+            search_scripts,
             import_script,
             listening::model_info,
             listening::download_model,
@@ -494,9 +556,15 @@ pub fn run() {
             listening::start_listening,
             listening::stop_listening,
             listening::pipeline_status,
+            play::start_play,
+            play::stop_play,
+            play::get_play_session,
             permissions::audio_permissions,
             permissions::request_microphone_access,
             permissions::open_privacy_settings,
+            settings::get_settings,
+            settings::update_settings,
+            settings::hotkey_bindings,
             knowledge::list_knowledge,
             knowledge::import_knowledge,
             knowledge::delete_knowledge

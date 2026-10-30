@@ -1,45 +1,45 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ScriptPanel } from "./ScriptPanel";
-import { TranscriptPanel } from "./TranscriptPanel";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { TranscriptPanel } from "../TranscriptPanel";
 import {
   captureProtection,
-  hideOverlay,
+  getSettings,
   hotkeyFailures,
   loadConfig,
   onClickThrough,
   onHotkey,
   saveConfig,
   setClickThrough,
+  stopPlay,
+  type CaptureProtection,
   type OverlayConfig,
-} from "./tauri";
-import { useAutoScroll } from "./useAutoScroll";
-import { useListening } from "./useListening";
-import { useScripts } from "./useScripts";
+  type Speaker,
+} from "../tauri";
+import { useAutoScroll } from "../useAutoScroll";
+import { useListening } from "../useListening";
+import { usePlay } from "../usePlay";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 // Keeps repeated 0.05 steps from drifting into values like 0.7500000000000001.
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
-export function App() {
+/** The overlay: reads the content being played, or shows live captions in an interview. */
+export function OverlayApp() {
   const [cfg, setCfg] = useState<OverlayConfig | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(false);
   const [captionsOpen, setCaptionsOpen] = useState(false);
+  const play = usePlay();
+  const interview = play.session?.mode === "interview";
   const listening = useListening(captionsOpen);
   const toggleSource = listening.toggle;
+  const startSources = listening.startAll;
   const isListening = listening.active.me || listening.active.remote;
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
 
-  const setActiveScript = useCallback((id: string) => {
-    setCfg((c) => (c && c.active_script !== id ? { ...c, active_script: id } : c));
-  }, []);
-  const scripts = useScripts(cfg !== null, cfg?.active_script ?? null, setActiveScript);
-  const { flush, refresh, clearError } = scripts;
-
+  // The overlay stays alive while hidden, and Settings changes the saved config meanwhile,
+  // so each new session reads it again. Without this the next save would bring old values back.
   useEffect(() => {
     loadConfig().then(setCfg);
-  }, []);
+  }, [play.session]);
 
   // Persist changes after a short pause so holding a key does not write on every repeat.
   // The first value is the one just loaded, so it is skipped.
@@ -54,30 +54,58 @@ export function App() {
     return () => window.clearTimeout(id);
   }, [cfg]);
 
-  useAutoScroll(scroller, playing && !editing, cfg?.scroll_speed ?? 0);
+  useAutoScroll(scroller, playing, cfg?.scroll_speed ?? 0);
+
+  // The overlay re-renders on every caption line and model-download tick, so the paragraph
+  // split (and its regex over the whole script) is kept until the script itself changes.
+  const paragraphs = useMemo(() => play.body.split(/\n{2,}/), [play.body]);
+
+  // A new session starts paused, with the captions only in an interview.
+  useEffect(() => {
+    setPlaying(false);
+    setCaptionsOpen(interview);
+  }, [play.session, interview]);
+
+  // An interview starts listening to the sources chosen in Settings, so the captions are
+  // running by the time the call begins.
+  useEffect(() => {
+    if (!interview) return;
+    let cancelled = false;
+    void getSettings().then((s) => {
+      if (cancelled) return;
+      const speakers: Speaker[] = [];
+      if (s.interview_system_audio) speakers.push("remote");
+      if (s.interview_microphone) speakers.push("me");
+      void startSources(speakers);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [play.session, interview, startSources]);
+
+  // Back to the top for each new content.
+  useEffect(() => {
+    scroller?.scrollTo({ top: 0 });
+  }, [play.body, scroller]);
 
   const [hotkeyIssues, setHotkeyIssues] = useState<string[]>([]);
   useEffect(() => {
     hotkeyFailures().then(setHotkeyIssues);
   }, []);
 
-  // Only a known problem is worth a warning. "unknown" and "best_effort" stay silent.
-  const [blackBox, setBlackBox] = useState(false);
+  // Split-screen protection is the product's promise, so the overlay says how well it holds.
+  // "unknown" stays quiet: it means the platform was not probed, not that sharing leaks.
+  const [protection, setProtection] = useState<CaptureProtection>("unknown");
   useEffect(() => {
-    captureProtection().then((p) => setBlackBox(p === "black_box"));
+    captureProtection().then(setProtection);
   }, []);
 
   // Global hotkeys arrive even when the overlay is not focused. They use functional
-  // updates and a ref so the listener is registered once instead of on every change.
-  const typingRef = useRef(false);
-  useEffect(() => {
-    typingRef.current = editing || panelOpen;
-  }, [editing, panelOpen]);
+  // updates so the listener is registered once instead of on every change.
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     onHotkey((action) => {
-      if (typingRef.current) return;
       switch (action) {
         case "play_pause":
           setPlaying((p) => !p);
@@ -115,23 +143,20 @@ export function App() {
     };
   }, []);
 
+  // Holding a key changes the config on every repeat, so the handler must not depend on it:
+  // re-registering the listener dozens of times a second is pure overhead. Everything it
+  // reads lives in refs, and config changes go through functional updates.
+  const live = useRef({ cfg, captionsOpen, scroller, toggleSource });
+  useEffect(() => {
+    live.current = { cfg, captionsOpen, scroller, toggleSource };
+  });
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const { cfg, captionsOpen, scroller, toggleSource } = live.current;
       if (!cfg) return;
-      if (editing) {
-        if (e.key === "Escape") {
-          setEditing(false);
-          void flush();
-        }
-        return;
-      }
-      if (panelOpen) {
-        // Typing in the rename box is handled by the box itself.
-        if ((e.target as HTMLElement).tagName === "INPUT") return;
-        if (e.key === "Escape") setPanelOpen(false);
-        return;
-      }
-      const set = (patch: Partial<OverlayConfig>) => setCfg({ ...cfg, ...patch });
+      const set = (patch: Partial<OverlayConfig>) =>
+        setCfg((c) => (c ? { ...c, ...patch } : c));
       switch (e.key) {
         case " ":
           e.preventDefault();
@@ -168,10 +193,6 @@ export function App() {
         case "c":
           void setClickThrough(true);
           break;
-        case "e":
-          setPlaying(false);
-          setEditing(true);
-          break;
         case "t":
           setCaptionsOpen((open) => !open);
           break;
@@ -181,27 +202,20 @@ export function App() {
         case "2":
           if (captionsOpen) void toggleSource("remote");
           break;
-        case "l":
-          setPlaying(false);
-          clearError();
-          void refresh();
-          setPanelOpen(true);
-          break;
         case "Home":
           scroller?.scrollTo({ top: 0 });
           break;
         case "Escape":
-          void hideOverlay();
+          void stopPlay();
           break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cfg, editing, panelOpen, captionsOpen, toggleSource, scroller, flush, refresh, clearError]);
+  }, []);
 
-  if (!cfg) return null;
-
-  const activeTitle = scripts.scripts.find((s) => s.id === cfg.active_script)?.title;
+  // Nothing to show until the overlay has its settings and a session to play.
+  if (!cfg || !play.session) return null;
 
   return (
     <main
@@ -210,14 +224,15 @@ export function App() {
     >
       <header className="bar" data-tauri-drag-region>
         <span className={playing ? "dot live" : "dot"} aria-hidden />
-        <span data-tauri-drag-region>
-          {editing ? "Đang sửa (Esc để xong)" : panelOpen ? "Chọn kịch bản" : playing ? "Đang chạy" : "Tạm dừng"}
-        </span>
-        {activeTitle && !panelOpen && (
-          <span className="script-title" title={activeTitle} data-tauri-drag-region>
-            {activeTitle}
+        {interview && <span data-tauri-drag-region>Interview</span>}
+        {play.title && (
+          <span className="script-title" title={play.title} data-tauri-drag-region>
+            {play.title}
           </span>
         )}
+        <span className="stop-hint" data-tauri-drag-region>
+          Esc để dừng
+        </span>
         <span className="spacer" data-tauri-drag-region />
         {isListening && (
           <span className="warn" title="Mic hoặc âm thanh hệ thống đang được nhận dạng" data-tauri-drag-region>
@@ -234,47 +249,55 @@ export function App() {
             {hotkeyIssues.length} phím tắt toàn cục lỗi
           </span>
         )}
-        <span data-tauri-drag-region>{cfg.scroll_speed} px/s</span>
-        <span data-tauri-drag-region>{cfg.font_size}px</span>
-        <span data-tauri-drag-region>{Math.round(cfg.opacity * 100)}%</span>
+        {protection === "full" && (
+          <span
+            className="bar-note"
+            title="Cửa sổ này không xuất hiện khi bạn chia sẻ màn hình"
+            data-tauri-drag-region
+          >
+            Ẩn khỏi chia sẻ
+          </span>
+        )}
+        {(protection === "best_effort" || protection === "black_box") && (
+          <span
+            className="warn"
+            title="Hệ điều hành có thể vẫn cho người khác thấy cửa sổ này khi bạn chia sẻ màn hình"
+            data-tauri-drag-region
+          >
+            Có thể bị thấy
+          </span>
+        )}
+        <button
+          type="button"
+          className="bar-btn"
+          onClick={() => setPlaying((p) => !p)}
+          aria-label={playing ? "Tạm dừng (Space)" : "Chạy (Space)"}
+          title={playing ? "Tạm dừng (Space)" : "Chạy (Space)"}
+          disabled={cfg.click_through}
+        >
+          {playing ? "Tạm dừng" : "Chạy"}
+          {!playing && <kbd>Space</kbd>}
+        </button>
       </header>
 
-      {blackBox && (
+      {protection === "black_box" && (
         <p className="notice" role="status">
           Windows bản cũ: khi chia sẻ màn hình, người xem sẽ thấy ô đen thay cho cửa sổ này. Cần Windows 10
           bản 2004 trở lên.
         </p>
       )}
 
-      {panelOpen ? (
-        <ScriptPanel
-          scripts={scripts.scripts}
-          activeId={cfg.active_script}
-          error={scripts.error}
-          onClose={() => setPanelOpen(false)}
-          onSelect={async (id) => {
-            if (await scripts.select(id)) setPanelOpen(false);
-          }}
-          onCreate={async () => {
-            if (await scripts.create()) {
-              setPanelOpen(false);
-              setEditing(true);
-            }
-          }}
-          onImport={async () => {
-            if (await scripts.importFile()) setPanelOpen(false);
-          }}
-          onRename={(id, title) => void scripts.rename(id, title)}
-          onRemove={(id) => void scripts.remove(id)}
-        />
-      ) : editing ? (
-        <textarea
-          className="editor"
-          value={scripts.body}
-          autoFocus
-          onChange={(e) => scripts.edit(e.target.value)}
-          aria-label="Nội dung kịch bản"
-        />
+      {play.error && (
+        <p className="notice" role="alert">
+          {play.error}
+        </p>
+      )}
+
+      {interview ? (
+        <div className="interview-note">
+          <strong>Play with AI</strong>
+          <p>Phụ đề đang chạy bên dưới. Trợ lý AI sẽ gợi ý câu trả lời ở bản sau, hiện chưa có.</p>
+        </div>
       ) : (
         <div
           ref={setScroller}
@@ -282,13 +305,13 @@ export function App() {
           style={{ fontSize: cfg.font_size }}
         >
           <div className="pad" style={{ height: `${cfg.reading_line * 100}%` }} />
-          {scripts.body.split(/\n{2,}/).map((p, i) => (
+          {paragraphs.map((p, i) => (
             <p key={i}>{p}</p>
           ))}
           <div className="pad" />
         </div>
       )}
-      {captionsOpen && !editing && !panelOpen && (
+      {captionsOpen && (
         <TranscriptPanel
           lines={listening.lines}
           active={listening.active}
@@ -299,16 +322,16 @@ export function App() {
           progress={listening.progress}
           latencyMs={listening.latencyMs}
           permissionIssue={listening.permissionIssue}
-          onToggle={(speaker) => void toggleSource(speaker)}
-          onOpenSettings={() => void listening.openSettings()}
-          onRetryPermission={() => void listening.retryPermission()}
-          onDownload={() => void listening.startDownload()}
+          onToggle={toggleSource}
+          onOpenSettings={listening.openSettings}
+          onRetryPermission={listening.retryPermission}
+          onDownload={listening.startDownload}
           onCancel={listening.cancel}
           onClear={listening.clear}
           onDismissError={listening.dismissError}
         />
       )}
-      {!editing && !panelOpen && <div className="cue-line" style={{ top: `${cfg.reading_line * 100}%` }} aria-hidden />}
+      {!interview && <div className="cue-line" style={{ top: `${cfg.reading_line * 100}%` }} aria-hidden />}
     </main>
   );
 }
