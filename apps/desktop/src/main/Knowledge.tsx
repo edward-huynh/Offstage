@@ -1,6 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type ImportReport, type KnowledgeKind } from "../tauri";
 import { useKnowledge } from "../useKnowledge";
+
+/** Formats a document can be written in, instead of imported from a file. */
+type WrittenKind = Extract<KnowledgeKind, "markdown" | "text">;
+
+const FORMATS: { value: WrittenKind; label: string }[] = [
+  { value: "markdown", label: "Markdown (.md)" },
+  { value: "text", label: "Văn bản (.txt)" },
+];
 
 /** How long "delete" waits for a second click before it goes back to normal. */
 const CONFIRM_MS = 3000;
@@ -28,6 +36,16 @@ export function Knowledge() {
   const knowledge = useKnowledge();
   const [report, setReport] = useState<ImportReport | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [writing, setWriting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [kind, setKind] = useState<WrittenKind>("markdown");
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const titleRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (writing) titleRef.current?.focus();
+  }, [writing]);
 
   useEffect(() => {
     if (!confirming) return;
@@ -39,6 +57,27 @@ export function Knowledge() {
     setReport(null);
     const result = await knowledge.importFiles();
     if (result && (result.imported.length > 0 || result.skipped.length > 0)) setReport(result);
+  };
+
+  const openForm = () => {
+    setReport(null);
+    knowledge.clearError();
+    setWriting(true);
+  };
+
+  const closeForm = () => {
+    setWriting(false);
+    setTitle("");
+    setText("");
+  };
+
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    const saved = await knowledge.create(title, kind, text);
+    setSaving(false);
+    // On failure the form stays open with what was typed, so nothing is lost.
+    if (saved) closeForm();
   };
 
   const remove = async (id: string) => {
@@ -54,19 +93,80 @@ export function Knowledge() {
     <section className="mn-screen">
       <div className="mn-know-head">
         <p className="mn-lead">
-          Tài liệu của bạn, như mô tả công việc, CV hay tiêu chí đánh giá. Nhận .pdf, .docx, .md và .txt, tối đa 20 MB mỗi tệp.
+          Tài liệu của bạn, như mô tả công việc, CV hay tiêu chí đánh giá. Thêm tệp .pdf, .docx, .md, .txt (tối đa 20 MB mỗi tệp)
+          hoặc tự gõ, dán nội dung vào.
         </p>
-        <button type="button" className="mn-btn primary" disabled={knowledge.importing} onClick={() => void add()}>
-          {knowledge.importing ? "Đang thêm…" : "Thêm tài liệu"}
-        </button>
+        <div className="mn-know-actions">
+          <button type="button" className="mn-btn secondary" disabled={writing} onClick={() => openForm()}>
+            Tạo tài liệu
+          </button>
+          <button type="button" className="mn-btn primary" disabled={knowledge.importing} onClick={() => void add()}>
+            {knowledge.importing ? "Đang thêm…" : "Thêm tệp"}
+          </button>
+        </div>
       </div>
 
-      <p className="mn-note-line">AI chưa đọc tài liệu: tính năng này đến ở bản sau. Hiện tại tệp chỉ được lưu trên máy bạn.</p>
+      <p className="mn-note-line">AI chưa đọc tài liệu: tính năng này đến ở bản sau. Hiện tại tài liệu chỉ được lưu trên máy bạn.</p>
 
       {knowledge.error && (
         <p className="mn-error" role="alert">
           {knowledge.error}
         </p>
+      )}
+
+      {writing && (
+        <form
+          className="mn-know-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <div className="mn-know-form-bar">
+            <div className="mn-seg" role="radiogroup" aria-label="Định dạng">
+              {FORMATS.map((f) => (
+                <button
+                  key={f.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={kind === f.value}
+                  className={kind === f.value ? "mn-seg-item is-selected" : "mn-seg-item"}
+                  onClick={() => setKind(f.value)}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <input
+              ref={titleRef}
+              className="mn-know-title"
+              value={title}
+              maxLength={100}
+              placeholder="Tên tài liệu"
+              aria-label="Tên tài liệu"
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </div>
+          <textarea
+            className="mn-textarea mn-know-text"
+            value={text}
+            placeholder={kind === "markdown" ? "Gõ hoặc dán nội dung Markdown…" : "Gõ hoặc dán nội dung…"}
+            aria-label="Nội dung"
+            spellCheck={false}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div className="mn-know-form-foot">
+            <span>{text.trim() === "" ? "Chưa có nội dung" : formatSize(new TextEncoder().encode(text).length)}</span>
+            <span className="mn-know-form-btns">
+              <button type="button" className="mn-btn secondary" disabled={saving} onClick={() => closeForm()}>
+                Huỷ
+              </button>
+              <button type="submit" className="mn-btn primary" disabled={saving || text.trim() === ""}>
+                {saving ? "Đang lưu…" : "Lưu tài liệu"}
+              </button>
+            </span>
+          </div>
+        </form>
       )}
 
       {report && (

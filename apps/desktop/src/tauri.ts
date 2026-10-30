@@ -370,6 +370,31 @@ export async function importKnowledge(): Promise<ImportReport> {
   return invoke<ImportReport>("import_knowledge");
 }
 
+/**
+ * Stores text typed or pasted by the user as a `.md` or `.txt` document. `title` has no
+ * extension: Rust adds it. Rejects with a readable message when the text is blank.
+ */
+export async function createKnowledge(
+  title: string,
+  kind: Extract<KnowledgeKind, "markdown" | "text">,
+  text: string,
+): Promise<KnowledgeDoc> {
+  if (!inTauri()) {
+    if (text.trim() === "") throw new Error("Chưa có nội dung");
+    const name = `${title.trim() || "Tài liệu"}.${kind === "markdown" ? "md" : "txt"}`;
+    const doc: KnowledgeDoc = {
+      id: `k${Date.now()}`,
+      name,
+      kind,
+      size_bytes: new TextEncoder().encode(text).length,
+      added_at: Date.now(),
+    };
+    browserDocs = [doc, ...browserDocs];
+    return doc;
+  }
+  return invoke<KnowledgeDoc>("create_knowledge", { title, kind, text });
+}
+
 export async function deleteKnowledge(id: string): Promise<void> {
   if (!inTauri()) {
     browserDocs = browserDocs.filter((d) => d.id !== id);

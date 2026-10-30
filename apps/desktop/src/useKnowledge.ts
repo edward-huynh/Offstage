@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  createKnowledge,
   deleteKnowledge,
   errorMessage,
   importKnowledge,
@@ -61,6 +62,16 @@ export function useKnowledge() {
     return report;
   }, [run]);
 
+  /** Stores typed or pasted text as a document. Resolves to `true` once it is saved. */
+  const create = useCallback(
+    (title: string, kind: "markdown" | "text", text: string) =>
+      run(async () => {
+        await createKnowledge(title, kind, text);
+        setDocs(await listKnowledge());
+      }),
+    [run],
+  );
+
   const remove = useCallback(
     (id: string) =>
       run(async () => {
@@ -72,5 +83,5 @@ export function useKnowledge() {
 
   const clearError = useCallback(() => setError(null), []);
 
-  return { docs, error, importing, clearError, refresh, importFiles, remove };
+  return { docs, error, importing, clearError, refresh, importFiles, create, remove };
 }

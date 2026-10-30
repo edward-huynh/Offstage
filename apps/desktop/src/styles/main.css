@@ -366,6 +366,33 @@ html[data-platform="mac"] .mn-header { height: 48px; }
 .mn-know-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .mn-know-head .mn-lead { margin-bottom: 12px; max-width: 62ch; line-height: 1.45; }
 .mn-know-head .mn-btn { flex: none; }
+.mn-know-actions { display: flex; flex: none; gap: 8px; }
+.mn-know-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid var(--mn-line);
+  border-radius: 14px;
+  background: var(--mn-raised);
+}
+.mn-know-form-bar { display: flex; align-items: center; gap: 10px; }
+.mn-know-title {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--mn-line);
+  border-radius: 8px;
+  background: var(--mn-bg);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+}
+.mn-know-title:focus-visible { outline: 2px solid rgb(255 255 255 / 0.5); outline-offset: 1px; }
+.mn-know-text { flex: none; min-height: 220px; max-height: 50vh; resize: vertical; }
+.mn-know-form-foot { display: flex; align-items: center; justify-content: space-between; color: var(--ink-dim); font-size: 12px; }
+.mn-know-form-btns { display: flex; gap: 8px; }
 .mn-note-line { margin: 0 0 18px; color: var(--ink-dim); font-size: 12px; line-height: 1.45; }
 .mn-know-report { margin-bottom: 16px; }
 .mn-know-report ul { margin: 0; padding-left: 18px; line-height: 1.5; }

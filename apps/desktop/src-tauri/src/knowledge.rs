@@ -56,6 +56,18 @@ pub async fn delete_knowledge(knowledge: State<'_, Knowledge>, id: String) -> Re
     crate::off_main(move || with_store(&store, |s| s.delete(&id))).await
 }
 
+/// Stores text typed or pasted in the app, as a `.md` or `.txt` document.
+#[tauri::command]
+pub async fn create_knowledge(
+    knowledge: State<'_, Knowledge>,
+    title: String,
+    kind: KnowledgeKind,
+    text: String,
+) -> Result<KnowledgeDoc, String> {
+    let store = knowledge.0.clone();
+    crate::off_main(move || with_store(&store, |s| s.create(&title, kind, &text))).await
+}
+
 /// Lets the user pick any number of documents and copies them into the store.
 /// Cancelling the dialog gives an empty report.
 /// Async so the blocking dialog does not run on the main thread, which would deadlock.

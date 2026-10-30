@@ -555,6 +555,7 @@ pub fn run() {
             settings::hotkey_bindings,
             knowledge::list_knowledge,
             knowledge::import_knowledge,
+            knowledge::create_knowledge,
             knowledge::delete_knowledge
         ])
         .build(tauri::generate_context!())

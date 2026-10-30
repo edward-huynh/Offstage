@@ -106,6 +106,10 @@ pub enum KnowledgeError {
     TooLarge,
     #[error("Tệp rỗng")]
     Empty,
+    #[error("Chưa có nội dung")]
+    EmptyText,
+    #[error("Chỉ tạo được tài liệu .md hoặc .txt")]
+    NotTextKind,
 }
 
 impl From<rusqlite::Error> for KnowledgeError {
@@ -245,6 +249,34 @@ impl KnowledgeStore {
             return Err(KnowledgeError::from(e));
         }
         Ok(doc)
+    }
+
+    /// Stores text the user typed or pasted as a `.md` or `.txt` document, so nothing has
+    /// to be imported from a file. `title` is the name without extension: the extension of
+    /// `kind` is added, and folder separators in the title are replaced so they cannot be
+    /// read as a path. The stored copy is exactly `text`.
+    pub fn create(&self, title: &str, kind: KnowledgeKind, text: &str) -> Result<KnowledgeDoc> {
+        if !matches!(kind, KnowledgeKind::Markdown | KnowledgeKind::Text) {
+            return Err(KnowledgeError::NotTextKind);
+        }
+        if text.trim().is_empty() {
+            return Err(KnowledgeError::EmptyText);
+        }
+        let ext = kind.extension();
+        let title = title
+            .replace(['/', '\\'], "-")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        // Leave room for the extension: a name cut at the limit must not lose it.
+        let title: String = title.chars().take(MAX_NAME_CHARS - ext.len() - 1).collect();
+        let title = title.trim_end();
+        let title = if title.is_empty() {
+            DEFAULT_NAME
+        } else {
+            title
+        };
+        self.import(&format!("{title}.{ext}"), text.as_bytes())
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
@@ -641,6 +673,101 @@ mod tests {
             );
         }
         assert_eq!(KnowledgeKind::from_db_name("exe"), None);
+    }
+
+    #[test]
+    fn typed_text_is_stored_as_a_document_of_the_chosen_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        let text = "# Tiêu chí\r\n- Giao tiếp rõ ràng\n";
+        let md = s
+            .create("Tiêu chí đánh giá", KnowledgeKind::Markdown, text)
+            .unwrap();
+        assert_eq!(md.name, "Tiêu chí đánh giá.md");
+        assert_eq!(md.kind, KnowledgeKind::Markdown);
+        assert_eq!(md.size_bytes, text.len() as u64);
+        let txt = s
+            .create("Ghi chú", KnowledgeKind::Text, "xin chào")
+            .unwrap();
+        assert_eq!(txt.name, "Ghi chú.txt");
+        assert_eq!(s.list().unwrap(), vec![txt.clone(), md.clone()]);
+        // Stored byte for byte, line endings included.
+        assert_eq!(
+            fs::read(s.path_of(&md.id).unwrap()).unwrap(),
+            text.as_bytes()
+        );
+        assert_eq!(
+            s.path_of(&txt.id).unwrap(),
+            stored(&dir, &format!("{}.txt", txt.id))
+        );
+    }
+
+    #[test]
+    fn a_title_never_becomes_a_path_and_never_loses_its_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        let doc = s
+            .create("../../etc/passwd", KnowledgeKind::Text, "x")
+            .unwrap();
+        assert_eq!(doc.name, "..-..-etc-passwd.txt");
+        assert!(s
+            .path_of(&doc.id)
+            .unwrap()
+            .starts_with(dir.path().join("knowledge")));
+
+        let long = s
+            .create(&"a".repeat(300), KnowledgeKind::Markdown, "x")
+            .unwrap();
+        assert_eq!(long.name.chars().count(), MAX_NAME_CHARS);
+        assert!(long.name.ends_with(".md"));
+        assert_eq!(long.kind, KnowledgeKind::Markdown);
+
+        // A title that already looks like a file name keeps it: the extension is added.
+        let dotted = s.create("notes.md", KnowledgeKind::Text, "x").unwrap();
+        assert_eq!(dotted.name, "notes.md.txt");
+        assert_eq!(dotted.kind, KnowledgeKind::Text);
+    }
+
+    #[test]
+    fn a_blank_title_falls_back_to_the_default_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        for title in ["", "   ", "\t\n"] {
+            let doc = s.create(title, KnowledgeKind::Markdown, "x").unwrap();
+            assert_eq!(doc.name, "Tài liệu.md", "{title:?}");
+        }
+    }
+
+    #[test]
+    fn blank_text_and_non_text_formats_are_rejected_and_write_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        for text in ["", "   ", "\n\t \r\n"] {
+            assert!(matches!(
+                s.create("a", KnowledgeKind::Text, text),
+                Err(KnowledgeError::EmptyText)
+            ));
+        }
+        for kind in [KnowledgeKind::Pdf, KnowledgeKind::Docx] {
+            assert!(matches!(
+                s.create("a", kind, "x"),
+                Err(KnowledgeError::NotTextKind)
+            ));
+        }
+        assert!(s.list().unwrap().is_empty());
+        assert!(!dir.path().join("knowledge").exists());
+    }
+
+    #[test]
+    fn typed_text_over_the_limit_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        let big = "a".repeat(usize::try_from(MAX_FILE_BYTES).unwrap() + 1);
+        assert!(matches!(
+            s.create("big", KnowledgeKind::Text, &big),
+            Err(KnowledgeError::TooLarge)
+        ));
+        assert!(s.list().unwrap().is_empty());
     }
 
     #[test]
