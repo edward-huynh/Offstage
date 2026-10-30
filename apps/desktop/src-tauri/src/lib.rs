@@ -3,7 +3,7 @@ use std::{
     str::FromStr,
     sync::{
         mpsc::{self, RecvTimeoutError},
-        Mutex,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -50,47 +50,72 @@ struct ClickThroughMenu(CheckMenuItem<Wry>);
 struct WindowSaver(mpsc::Sender<()>);
 
 /// The script storage. The lock keeps two commands from interleaving their
-/// read-modify-write of the index.
-struct Scripts(Mutex<ScriptStore>);
+/// read-modify-write of the index. The `Arc` lets a command hand the store to the blocking
+/// pool, so file reads and writes never run on the window's event loop.
+struct Scripts(Arc<Mutex<ScriptStore>>);
 
 fn with_scripts<T>(
-    scripts: &Scripts,
+    store: &Mutex<ScriptStore>,
     op: impl FnOnce(&ScriptStore) -> Result<T, ScriptError>,
 ) -> Result<T, String> {
-    let store = scripts
-        .0
+    let store = store
         .lock()
         .map_err(|_| "script storage is unavailable".to_owned())?;
     op(&store).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn list_scripts(scripts: State<Scripts>) -> Result<Vec<ScriptMeta>, String> {
-    with_scripts(&scripts, |s| s.list())
+/// Runs blocking work off the main thread. Every command that touches the disk has to go
+/// through here: run on the main thread it stalls repaints and window events while it works.
+pub(crate) async fn off_main<T, F>(op: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(op)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn create_script(
-    scripts: State<Scripts>,
+async fn list_scripts(scripts: State<'_, Scripts>) -> Result<Vec<ScriptMeta>, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.list())).await
+}
+
+#[tauri::command]
+async fn create_script(
+    scripts: State<'_, Scripts>,
     title: String,
     body: String,
 ) -> Result<ScriptMeta, String> {
-    with_scripts(&scripts, |s| s.create(&title, &body))
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.create(&title, &body))).await
 }
 
 #[tauri::command]
-fn read_script(scripts: State<Scripts>, id: String) -> Result<String, String> {
-    with_scripts(&scripts, |s| s.read(&id))
+async fn read_script(scripts: State<'_, Scripts>, id: String) -> Result<String, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.read(&id))).await
 }
 
 #[tauri::command]
-fn save_script(scripts: State<Scripts>, id: String, body: String) -> Result<ScriptMeta, String> {
-    with_scripts(&scripts, |s| s.save(&id, &body))
+async fn save_script(
+    scripts: State<'_, Scripts>,
+    id: String,
+    body: String,
+) -> Result<ScriptMeta, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.save(&id, &body))).await
 }
 
 #[tauri::command]
-fn rename_script(scripts: State<Scripts>, id: String, title: String) -> Result<ScriptMeta, String> {
-    with_scripts(&scripts, |s| s.rename(&id, &title))
+async fn rename_script(
+    scripts: State<'_, Scripts>,
+    id: String,
+    title: String,
+) -> Result<ScriptMeta, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.rename(&id, &title))).await
 }
 
 /// Results the search dialog can show at once.
@@ -98,13 +123,18 @@ const SEARCH_LIMIT: usize = 20;
 
 /// Searches titles and text, ignoring case and Vietnamese accents.
 #[tauri::command]
-fn search_scripts(scripts: State<Scripts>, query: String) -> Result<Vec<ScriptHit>, String> {
-    with_scripts(&scripts, |s| s.search(&query, SEARCH_LIMIT))
+async fn search_scripts(
+    scripts: State<'_, Scripts>,
+    query: String,
+) -> Result<Vec<ScriptHit>, String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.search(&query, SEARCH_LIMIT))).await
 }
 
 #[tauri::command]
-fn delete_script(scripts: State<Scripts>, id: String) -> Result<(), String> {
-    with_scripts(&scripts, |s| s.delete(&id))
+async fn delete_script(scripts: State<'_, Scripts>, id: String) -> Result<(), String> {
+    let store = scripts.0.clone();
+    off_main(move || with_scripts(&store, |s| s.delete(&id))).await
 }
 
 /// Lets the user pick a `.txt` or `.md` file and stores it as a new script.
@@ -144,7 +174,7 @@ async fn import_script(
         .and_then(|s| s.to_str())
         .unwrap_or_default();
     let title = scripts::title_for_import(stem, &content);
-    with_scripts(&scripts, |s| s.create(&title, &content)).map(Some)
+    with_scripts(&scripts.0, |s| s.create(&title, &content)).map(Some)
 }
 
 /// On the very first run, adds one sample script so the teleprompter is not empty.
@@ -160,7 +190,7 @@ fn seed_sample_script(app: &AppHandle, scripts: &Scripts) {
     {
         return;
     }
-    let result = with_scripts(scripts, |s| {
+    let result = with_scripts(&scripts.0, |s| {
         if s.list()?.is_empty() {
             s.create(scripts::SAMPLE_TITLE, scripts::SAMPLE_BODY)?;
         }
@@ -428,10 +458,10 @@ pub fn run() {
             app.manage(WindowSaver(spawn_window_saver(app.handle().clone())));
 
             let scripts_dir = app.path().app_data_dir()?.join("scripts");
-            app.manage(Scripts(Mutex::new(ScriptStore::new(scripts_dir))));
+            app.manage(Scripts(Arc::new(Mutex::new(ScriptStore::new(scripts_dir)))));
             let knowledge_dir = app.path().app_data_dir()?.join("knowledge");
-            app.manage(knowledge::Knowledge(Mutex::new(KnowledgeStore::new(
-                knowledge_dir,
+            app.manage(knowledge::Knowledge(Arc::new(Mutex::new(
+                KnowledgeStore::new(knowledge_dir),
             ))));
             app.manage(listening::Listening::default());
             app.manage(play::Play::default());
