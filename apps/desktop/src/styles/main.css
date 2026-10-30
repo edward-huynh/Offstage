@@ -17,6 +17,9 @@ html[data-view="main"] body { overflow: hidden; }
 .mn-app {
   display: grid;
   grid-template-columns: var(--mn-side-w) minmax(0, 1fr);
+  /* One row that fills the window: without it the implicit row grows to the tallest
+     screen, and the screens never get a scrollbar because nothing is too tall. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   font-size: 14px;
   transition: grid-template-columns 0.15s ease;
@@ -27,6 +30,7 @@ html[data-view="main"] body { overflow: hidden; }
 .mn-side {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   gap: 4px;
   min-width: 0;
   padding: 0 10px 10px;
@@ -139,14 +143,14 @@ html[data-platform="mac"] .is-collapsed .mn-side-top { justify-content: flex-end
 .is-collapsed .mn-nav, .is-collapsed .mn-profile, .is-collapsed .mn-new { justify-content: center; padding-left: 0; padding-right: 0; }
 
 /* Title bar and screens */
-.mn-pane { display: flex; flex-direction: column; min-width: 0; height: 100%; }
+.mn-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 .mn-header { display: flex; align-items: center; flex: none; height: 46px; padding: 0 24px; border-bottom: 1px solid var(--mn-line); }
 html[data-platform="mac"] .mn-header { height: 48px; }
 .mn-header-title { margin: 0; font-size: 14px; font-weight: 600; }
 .mn-header-sub { color: var(--ink-dim); font-weight: 400; }
 
 .mn-main { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 24px 32px 0; overflow: hidden; }
-.mn-screen { flex: 1; width: 100%; min-height: 0; max-width: 980px; padding-bottom: 32px; overflow-y: auto; }
+.mn-screen { flex: 1; width: 100%; min-height: 0; max-width: 980px; padding-bottom: 32px; overflow-y: auto; scrollbar-width: thin; }
 .mn-screen.fill { display: flex; flex-direction: column; max-width: none; overflow: hidden; }
 .mn-actions { display: flex; gap: 8px; }
 .mn-lead { margin: 0 0 20px; color: var(--ink-dim); }
