@@ -1,3 +1,4 @@
+import { useId, useRef } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { AlertTriangle } from "lucide-react";
 import {
@@ -145,6 +146,102 @@ export function Section({
       </CardHeader>
       <CardContent className="flex flex-col divide-y divide-border">{children}</CardContent>
     </Card>
+  );
+}
+
+const TAB_SPRING = { type: "spring", stiffness: 520, damping: 42 } as const;
+
+export type TabItem<T extends string> = {
+  id: T;
+  label: string;
+  icon?: React.ReactNode;
+};
+
+/**
+ * A tab strip for grouping sections, with the same gliding pill as the sidebar.
+ * Arrow keys, Home and End move between tabs; focus and selection stay together.
+ */
+export function SegmentedTabs<T extends string>({
+  items,
+  value,
+  onChange,
+  label,
+  idPrefix = "tabs",
+}: {
+  items: readonly TabItem<T>[];
+  value: T;
+  onChange: (id: T) => void;
+  label: string;
+  /** Unique per tab strip on the page, so tab and panel ids do not collide. */
+  idPrefix?: string;
+}) {
+  const layoutId = useId();
+  const refs = useRef(new Map<T, HTMLButtonElement>());
+  const active = Math.max(
+    0,
+    items.findIndex((item) => item.id === value),
+  );
+
+  const select = (index: number) => {
+    const next = items[(index + items.length) % items.length];
+    if (!next) return;
+    onChange(next.id);
+    refs.current.get(next.id)?.focus();
+  };
+
+  return (
+    <div
+      role="tablist"
+      aria-label={label}
+      aria-orientation="horizontal"
+      className="inline-flex items-center gap-0.5 rounded-xl border border-border/60 bg-card p-1"
+      onKeyDown={(event) => {
+        const targets: Record<string, number> = {
+          ArrowRight: active + 1,
+          ArrowLeft: active - 1,
+          Home: 0,
+          End: items.length - 1,
+        };
+        const index = targets[event.key];
+        if (index === undefined) return;
+        event.preventDefault();
+        select(index);
+      }}
+    >
+      {items.map((item) => {
+        const selected = item.id === value;
+        return (
+          <button
+            key={item.id}
+            ref={(element) => {
+              if (element) refs.current.set(item.id, element);
+              else refs.current.delete(item.id);
+            }}
+            type="button"
+            role="tab"
+            id={`${idPrefix}-tab-${item.id}`}
+            aria-selected={selected}
+            aria-controls={`${idPrefix}-panel-${item.id}`}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(item.id)}
+            className={cn(
+              "relative flex h-8 items-center gap-2 rounded-lg px-3 text-[13px] font-medium transition-colors",
+              selected ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {selected && (
+              <motion.span
+                layoutId={layoutId}
+                className="absolute inset-0 rounded-lg bg-white/[0.07]"
+                transition={TAB_SPRING}
+              />
+            )}
+            {item.icon && <span className="relative z-10 flex">{item.icon}</span>}
+            <span className="relative z-10">{item.label}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
