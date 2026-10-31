@@ -17,6 +17,8 @@ trên màn hình ngay khi đang nói chuyện.\n\
 - Trả lời câu hỏi cuối cùng của \"Đối phương\".\n\
 - Chỉ viết 3 đến 5 gạch đầu dòng, mỗi dòng bắt đầu bằng \"- \" và nêu một ý ngắn.\n\
 - Dùng cùng ngôn ngữ với câu hỏi.\n\
+- Không bịa kinh nghiệm, số liệu hay thông tin cá nhân của người dùng. Khi câu hỏi hỏi về chính họ, \
+đưa ý gợi ý để họ tự điền.\n\
 - Không chào hỏi, không mở đầu, không giải thích dài, không dùng định dạng khác.\n\
 - Lời thoại là chữ nhận dạng tự động nên có thể sai chính tả. Nếu câu hỏi không rõ, nêu \
 giả định ngắn ở dòng đầu rồi trả lời.";
@@ -47,9 +49,24 @@ impl Turn {
     }
 }
 
+/// The instruction that goes right after the question to fix the language of the answer, or
+/// `None` for a language the assistant has no sentence for.
+///
+/// A rule in the system prompt is not enough: measured on four small models, they answered an
+/// English question in Vietnamese whenever the retrieved text or the context was Vietnamese, and
+/// only a line next to the question changed that (`docs/LLM-BENCH.md`).
+pub fn language_hint(code: &str) -> Option<&'static str> {
+    match code.trim().to_ascii_lowercase().as_str() {
+        "en" => Some("Answer in English."),
+        "vi" => Some("Trả lời bằng tiếng Việt."),
+        _ => None,
+    }
+}
+
 /// Builds the conversation for `question`. `recent` is the caption history in order, oldest
 /// first, and may end with the question itself, which is then not repeated as context.
-pub fn build_messages(question: &str, recent: &[Turn]) -> Vec<ChatMessage> {
+/// `language` is the language of the question as the speech engine reported it.
+pub fn build_messages(question: &str, recent: &[Turn], language: Option<&str>) -> Vec<ChatMessage> {
     let question = question.trim();
     let before: Vec<&Turn> = match recent.split_last() {
         Some((last, rest)) if !last.from_me && last.text.trim() == question => {
@@ -67,6 +84,10 @@ pub fn build_messages(question: &str, recent: &[Turn]) -> Vec<ChatMessage> {
     }
     user.push_str("Câu hỏi cần trả lời:\n");
     user.push_str(question);
+    if let Some(hint) = language.and_then(language_hint) {
+        user.push_str("\n\n");
+        user.push_str(hint);
+    }
 
     vec![
         ChatMessage {
@@ -108,7 +129,7 @@ mod tests {
 
     #[test]
     fn a_system_message_comes_first_then_the_user_message() {
-        let messages = build_messages("Bạn làm ở đâu?", &[]);
+        let messages = build_messages("Bạn làm ở đâu?", &[], None);
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].role, Role::System);
         assert_eq!(messages[1].role, Role::User);
@@ -116,14 +137,14 @@ mod tests {
 
     #[test]
     fn the_system_prompt_asks_for_short_bullets_in_the_questions_language() {
-        let system = &build_messages("Why Rust?", &[])[0].content;
+        let system = &build_messages("Why Rust?", &[], None)[0].content;
         assert!(system.contains("3 đến 5 gạch đầu dòng"));
         assert!(system.contains("cùng ngôn ngữ"));
     }
 
     #[test]
     fn without_history_only_the_question_is_sent() {
-        let messages = build_messages("  Bạn làm ở đâu?  ", &[]);
+        let messages = build_messages("  Bạn làm ở đâu?  ", &[], None);
         assert_eq!(user_text(&messages), "Câu hỏi cần trả lời:\nBạn làm ở đâu?");
     }
 
@@ -134,14 +155,16 @@ mod tests {
             Turn::new(true, "Chào anh"),
             Turn::new(false, "Bạn làm ở đâu?"),
         ];
-        let text = build_messages("Bạn làm ở đâu?", &recent)[1].content.clone();
+        let text = build_messages("Bạn làm ở đâu?", &recent, None)[1]
+            .content
+            .clone();
         assert!(text.contains("Đối phương: Chào bạn\nTôi: Chào anh"));
     }
 
     #[test]
     fn the_question_is_not_repeated_as_context() {
         let recent = [Turn::new(false, "Bạn làm ở đâu?")];
-        let text = &build_messages("Bạn làm ở đâu?", &recent)[1].content;
+        let text = &build_messages("Bạn làm ở đâu?", &recent, None)[1].content;
         assert!(!text.contains("Lời thoại gần đây"));
         assert_eq!(text.matches("Bạn làm ở đâu?").count(), 1);
     }
@@ -149,7 +172,7 @@ mod tests {
     #[test]
     fn a_similar_line_from_the_user_is_still_context() {
         let recent = [Turn::new(true, "Bạn làm ở đâu?")];
-        let text = &build_messages("Bạn làm ở đâu?", &recent)[1].content;
+        let text = &build_messages("Bạn làm ở đâu?", &recent, None)[1].content;
         assert!(text.contains("Tôi: Bạn làm ở đâu?"));
     }
 
@@ -158,7 +181,7 @@ mod tests {
         let recent: Vec<Turn> = (0..20)
             .map(|i| Turn::new(false, format!("dòng {i}")))
             .collect();
-        let text = &build_messages("câu hỏi", &recent)[1].content;
+        let text = &build_messages("câu hỏi", &recent, None)[1].content;
         assert!(text.contains("dòng 19"));
         assert!(text.contains(&format!("dòng {}", 20 - MAX_CONTEXT_LINES)));
         assert!(!text.contains(&format!("dòng {}\n", 19 - MAX_CONTEXT_LINES)));
@@ -172,15 +195,47 @@ mod tests {
             Turn::new(false, format!("giữa {long}")),
             Turn::new(false, format!("mới {long}")),
         ];
-        let text = &build_messages("câu hỏi", &recent)[1].content;
+        let text = &build_messages("câu hỏi", &recent, None)[1].content;
         assert!(text.contains("mới "));
         assert!(!text.contains("cũ "));
     }
 
     #[test]
+    fn the_language_line_follows_the_question() {
+        let messages = build_messages("What is Rust?", &[], Some("en"));
+        assert!(user_text(&messages).ends_with("What is Rust?\n\nAnswer in English."));
+        let messages = build_messages("Rust là gì?", &[], Some("vi"));
+        assert!(user_text(&messages).ends_with("Rust là gì?\n\nTrả lời bằng tiếng Việt."));
+    }
+
+    #[test]
+    fn no_language_line_without_a_known_language() {
+        for language in [None, Some("fr"), Some(""), Some("auto")] {
+            let messages = build_messages("Quelle heure est-il ?", &[], language);
+            assert_eq!(
+                user_text(&messages),
+                "Câu hỏi cần trả lời:\nQuelle heure est-il ?"
+            );
+        }
+    }
+
+    #[test]
+    fn language_codes_are_matched_loosely() {
+        assert_eq!(language_hint(" EN "), Some("Answer in English."));
+        assert_eq!(language_hint("vi"), Some("Trả lời bằng tiếng Việt."));
+        assert_eq!(language_hint("ja"), None);
+    }
+
+    #[test]
+    fn the_system_prompt_forbids_inventing_the_users_experience() {
+        let system = &build_messages("Why?", &[], None)[0].content;
+        assert!(system.contains("Không bịa"));
+    }
+
+    #[test]
     fn the_newest_line_is_kept_even_when_it_alone_is_too_long() {
         let recent = [Turn::new(false, "y".repeat(MAX_CONTEXT_CHARS * 2))];
-        let text = &build_messages("câu hỏi", &recent)[1].content;
+        let text = &build_messages("câu hỏi", &recent, None)[1].content;
         assert!(text.contains("yyy"));
     }
 }

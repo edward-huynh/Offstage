@@ -298,6 +298,7 @@ fn stt_loop(
                         speaker,
                         text: text.to_owned(),
                         is_final: true,
+                        language: transcript.language.clone(),
                     });
                 }
             }
@@ -382,6 +383,8 @@ mod tests {
     /// Answers with the number of samples it was given, so a test can tell utterances apart.
     #[derive(Default)]
     struct FakeStt {
+        /// Language the fake reports for every utterance.
+        language: Option<&'static str>,
         delay: Duration,
         fail_first: AtomicBool,
         empty: AtomicBool,
@@ -402,7 +405,7 @@ mod tests {
             };
             Ok(Transcript {
                 text,
-                language: None,
+                language: self.language.map(str::to_owned),
             })
         }
     }
@@ -439,6 +442,7 @@ mod tests {
                     speaker,
                     text,
                     is_final: true,
+                    ..
                 } => Some((*speaker, text.clone())),
                 _ => None,
             })
@@ -488,6 +492,30 @@ mod tests {
         let samples: usize = got[0].1.split(' ').next().unwrap().parse().unwrap();
         assert!(samples > RATE && samples < 2 * RATE, "{samples} samples");
         assert!(errors(&events).is_empty());
+    }
+
+    #[test]
+    fn the_transcript_event_carries_the_language_the_engine_reported() {
+        let stt = Arc::new(FakeStt {
+            language: Some("vi"),
+            ..FakeStt::default()
+        });
+        let (mut pipeline, events) = pipeline_with(stt);
+        let (source, feed) = FakeSource::new(Speaker::Remote);
+        pipeline.start(source).unwrap();
+        feed.push(Speaker::Remote, &burst(1.0));
+        wait_until("a transcript", || !transcripts(&events).is_empty());
+
+        let languages: Vec<Option<String>> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                AppEvent::Transcript { language, .. } => Some(language.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(languages, [Some("vi".to_owned())]);
     }
 
     #[test]

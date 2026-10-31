@@ -94,6 +94,7 @@ pub fn on_event(app: &AppHandle, event: &AppEvent) {
         speaker,
         text,
         is_final: true,
+        language,
     } = event
     else {
         return;
@@ -104,11 +105,11 @@ pub fn on_event(app: &AppHandle, event: &AppEvent) {
         state.history.snapshot()
     });
     if let (true, Some(history)) = (remote && is_question(text), history) {
-        answer(app, text.clone(), history);
+        answer(app, text.clone(), language.clone(), history);
     }
 }
 
-fn answer(app: &AppHandle, question: String, history: Vec<Turn>) {
+fn answer(app: &AppHandle, question: String, language: Option<String>, history: Vec<Turn>) {
     match load_config(app) {
         Ok(config) if config.enabled => {}
         Ok(_) => return,
@@ -133,7 +134,7 @@ fn answer(app: &AppHandle, question: String, history: Vec<Turn>) {
         },
     );
 
-    let messages = build_messages(&question, &history);
+    let messages = build_messages(&question, &history, language.as_deref());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut on_token = {

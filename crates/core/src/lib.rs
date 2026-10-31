@@ -229,6 +229,9 @@ pub enum AppEvent {
         speaker: Speaker,
         text: String,
         is_final: bool,
+        /// Language of the utterance as the speech engine reported it (`vi`, `en`...), when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
     },
     QuestionDetected {
         text: String,
@@ -508,6 +511,7 @@ mod tests {
                 speaker: Speaker::Me,
                 text: "hi".into(),
                 is_final: true,
+                language: None,
             },
             AppEvent::QuestionDetected {
                 text: "why?".into(),
@@ -535,12 +539,34 @@ mod tests {
             speaker: Speaker::Remote,
             text: "xin chào".into(),
             is_final: true,
+            language: None,
         })
         .unwrap();
         assert_eq!(
             json,
             r#"{"type":"transcript","speaker":"remote","text":"xin chào","is_final":true}"#
         );
+    }
+
+    #[test]
+    fn transcript_event_carries_the_language_when_it_is_known() {
+        let event = AppEvent::Transcript {
+            speaker: Speaker::Remote,
+            text: "hello".into(),
+            is_final: true,
+            language: Some("en".into()),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            json.ends_with(r#""is_final":true,"language":"en"}"#),
+            "{json}"
+        );
+        // An event written before the field existed still reads back.
+        let old: AppEvent = serde_json::from_str(
+            r#"{"type":"transcript","speaker":"me","text":"x","is_final":true}"#,
+        )
+        .unwrap();
+        assert!(matches!(old, AppEvent::Transcript { language: None, .. }));
     }
 
     #[test]
