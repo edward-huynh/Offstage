@@ -28,8 +28,9 @@ use crate::{resample::FrameNormalizer, AudioError, AudioFrame, AudioSource};
 
 /// How long the stream may take to open and start. A pending permission prompt exceeds it.
 const START_TIMEOUT: Duration = Duration::from_secs(5);
-/// How long to wait for the first audio once the stream runs. Devices deliver buffers
-/// continuously, even silent ones, so none at all means the OS is withholding the audio.
+/// How long to wait for the first audio of a microphone once the stream runs. A microphone
+/// delivers buffers continuously, even silent ones, so none at all means the OS is withholding it.
+/// A loopback tap does not wait (see [`waits_for_first_data`]).
 const FIRST_DATA_TIMEOUT: Duration = Duration::from_secs(3);
 /// Raw buffers waiting for the worker. If it falls this far behind, new buffers are dropped.
 const QUEUE_DEPTH: usize = 64;
@@ -106,9 +107,15 @@ impl AudioSource for CpalSource {
             Ok(opened) => opened?,
             Err(_) => return Err(permission_pending(kind)),
         };
-        let first = data_rx
-            .recv_timeout(FIRST_DATA_TIMEOUT)
-            .map_err(|_| permission_pending(kind))?;
+        let first = if waits_for_first_data(kind) {
+            Some(
+                data_rx
+                    .recv_timeout(FIRST_DATA_TIMEOUT)
+                    .map_err(|_| permission_pending(kind))?,
+            )
+        } else {
+            None
+        };
         let mut normalizer = FrameNormalizer::new(sample_rate, channels)?;
 
         let stop_worker = Arc::new(AtomicBool::new(false));
@@ -117,7 +124,9 @@ impl AudioSource for CpalSource {
         let worker = thread::Builder::new()
             .name("offstage-audio-worker".into())
             .spawn(move || {
-                forward(first, &mut normalizer, speaker, &mut sink);
+                if let Some(first) = first {
+                    forward(first, &mut normalizer, speaker, &mut sink);
+                }
                 worker_loop(&data_rx, &worker_stop, &mut normalizer, speaker, &mut sink);
             })
             .map_err(|e| AudioError::Device(e.to_string()))?;
@@ -139,6 +148,15 @@ impl AudioSource for CpalSource {
             }
         }
     }
+}
+
+/// Whether starting must see a first buffer before it reports success. A microphone sends
+/// buffers all the time, so silence from it means the OS withholds it. The macOS loopback tap
+/// sends none while nothing is playing (measured: 0 callbacks in 5 s of silence), so waiting
+/// there would report a missing permission whenever the call is quiet. A refused loopback
+/// permission has to surface as an error from opening or playing the stream instead.
+fn waits_for_first_data(kind: Kind) -> bool {
+    kind == Kind::Microphone
 }
 
 fn permission_pending(kind: Kind) -> AudioError {
@@ -309,6 +327,12 @@ mod tests {
     fn sources_report_which_side_of_the_call_they_hear() {
         assert_eq!(CpalSource::microphone().speaker(), Speaker::Me);
         assert_eq!(CpalSource::system_loopback().speaker(), Speaker::Remote);
+    }
+
+    #[test]
+    fn only_the_microphone_must_deliver_audio_to_count_as_started() {
+        assert!(waits_for_first_data(Kind::Microphone));
+        assert!(!waits_for_first_data(Kind::SystemLoopback));
     }
 
     #[test]

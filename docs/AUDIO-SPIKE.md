@@ -74,6 +74,10 @@ Ba điểm quan sát được:
 
 **Hệ quả thiết kế cho `crates/audio` (tap):** vì `AudioDeviceStart` có thể chặn vô hạn khi quyền chưa quyết, luôn chạy khởi động trên một thread riêng có timeout, và coi "không nhận callback nào sau khoảng 2 s" là tín hiệu chưa có quyền để dẫn người dùng tới onboarding (task 2.7), thay vì chờ lỗi.
 
+### Tap không gửi buffer khi không có âm thanh nào phát
+
+Đo ngày 2026-10-31 (macOS 26, loa trong): `tap 5 --no-beep` khi máy im lặng cho 0 callback, 0 khung. Có bíp thì 823 callback trong 8 s. Nên "không có buffer nào" không chứng minh thiếu quyền. `CpalSource::start` từng coi 3 s không có buffer là `permission_denied`, nên bấm nguồn âm thanh hệ thống lúc máy im lặng hiện banner xin quyền sai. Nay loopback không chờ buffer đầu tiên (xem `waits_for_first_data` trong `crates/audio/src/capture.rs`). Hệ quả: chưa biết quyền bị từ chối biểu hiện thế nào ở tap (lỗi khi mở stream hay buffer toàn số 0), cần kiểm lại trên bản đóng gói.
+
 ### Chưa giải thích được
 
 Log tccd cho `com.anthropic.claude-code` đối với `kTCCServiceAudioCapture` ghi `AUTHREQ_RESULT authValue=0, authReason=8` ngay (vài ms, không hộp thoại) ở các lần chạy tap thành công. Nhưng tap vẫn nhận âm thanh thật (bíp đúng thời điểm). Mình không xác minh được ý nghĩa chính xác của hai mã đó (nghi `authReason=8` liên quan thiếu chuỗi mô tả sử dụng, nhưng chưa kiểm chứng) và vì sao dữ liệu vẫn đến. Vì vậy: **đừng coi việc "chạy được từ terminal" là bằng chứng quyền đã đúng.** Phải kiểm lại trên bản đóng gói có `NSAudioCaptureUsageDescription` (task 2.7).
