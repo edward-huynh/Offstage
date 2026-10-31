@@ -14,7 +14,10 @@ use offstage_stt::{Language, SpeechToText, WhisperConfig, WhisperStt};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::permissions::{self, Access};
+use crate::{
+    assistant,
+    permissions::{self, Access},
+};
 
 /// Error text meaning the model file is not on disk yet. The UI answers by offering a download.
 pub const MODEL_MISSING: &str = "model_missing";
@@ -44,7 +47,7 @@ pub struct ListeningStatus {
     pub busy: bool,
 }
 
-fn emit(app: &AppHandle, event: &AppEvent) {
+pub(crate) fn emit(app: &AppHandle, event: &AppEvent) {
     // A failed emit means the window is gone, so there is nobody to tell.
     let _ = app.emit(event.name(), event);
 }
@@ -196,7 +199,11 @@ fn start_blocking(app: &AppHandle, speaker: Speaker) -> Result<(), String> {
     };
     let pipeline = inner.pipeline.get_or_insert_with(|| {
         let handle = app.clone();
-        let sink: EventSink = Arc::new(move |event| emit(&handle, &event));
+        let sink: EventSink = Arc::new(move |event| {
+            emit(&handle, &event);
+            // A question from the other side may start an answer.
+            assistant::on_event(&handle, &event);
+        });
         Pipeline::new(engine, sink, PipelineConfig::default())
     });
 
@@ -233,6 +240,7 @@ fn stop_blocking(app: &AppHandle, speaker: Speaker) -> Result<(), String> {
 
 /// Stops every source and releases the model. Used when a play session ends.
 pub fn stop_all(app: &AppHandle) {
+    assistant::cancel_current(app);
     let listening = app.state::<Listening>();
     if let Ok(mut inner) = listening.inner.lock() {
         if let Some(pipeline) = inner.pipeline.as_mut() {

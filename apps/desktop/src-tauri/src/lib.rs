@@ -20,6 +20,7 @@ use tauri::{
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
+mod assistant;
 mod knowledge;
 mod listening;
 mod permissions;
@@ -460,6 +461,7 @@ pub fn run() {
                 KnowledgeStore::new(db, data_dir.join("knowledge")),
             ))));
             app.manage(listening::Listening::default());
+            app.manage(assistant::Assistant::default());
             app.manage(play::Play::default());
             seed_sample_script(app.handle(), &app.state::<Scripts>());
 
@@ -556,7 +558,14 @@ pub fn run() {
             knowledge::list_knowledge,
             knowledge::import_knowledge,
             knowledge::create_knowledge,
-            knowledge::delete_knowledge
+            knowledge::delete_knowledge,
+            assistant::assistant_get_config,
+            assistant::assistant_set_config,
+            assistant::assistant_status,
+            assistant::assistant_set_key,
+            assistant::assistant_clear_key,
+            assistant::assistant_test_connection,
+            assistant::assistant_list_models
         ])
         .build(tauri::generate_context!())
         .expect("error while building Offstage")

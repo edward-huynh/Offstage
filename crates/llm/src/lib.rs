@@ -1,6 +1,8 @@
 //! LLM providers: local (llama.cpp) and any OpenAI-compatible endpoint
 //! (OpenAI, OpenCode Zen/Go, OpenRouter, Ollama, LM Studio...).
 
+pub mod config;
+pub mod history;
 pub mod openai_compat;
 pub mod presets;
 pub mod prompt;

@@ -2722,6 +2722,7 @@ dependencies = [
  "objc2-av-foundation",
  "offstage-audio",
  "offstage-core",
+ "offstage-llm",
  "offstage-models",
  "offstage-pipeline",
  "offstage-stt",
@@ -2731,6 +2732,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
+ "tokio-util",
  "windows-version",
 ]
 

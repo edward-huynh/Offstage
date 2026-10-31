@@ -159,6 +159,12 @@ impl LlmProvider for OpenAiCompat {
     }
 }
 
+/// True when `base_url` points at this machine, so nothing said in the call leaves it.
+/// An address that cannot be read is treated as remote.
+pub fn endpoint_is_local(base_url: &str) -> bool {
+    check_endpoint(base_url).unwrap_or(false)
+}
+
 /// Accepts `https://` anywhere and `http://` only for this machine. Returns whether the
 /// endpoint is on this machine.
 fn check_endpoint(base_url: &str) -> Result<bool, LlmError> {
