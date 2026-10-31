@@ -1,0 +1,12 @@
+# Throwaway measurement of local LLMs for the RAG answer (Phase 3/4). Not part of the workspace,
+# so it does not affect `npm run check`. The empty [workspace] table keeps it that way.
+[package]
+name = "offstage-llm-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+llama-cpp-2 = { version = "0.1.160", features = ["metal"] }
