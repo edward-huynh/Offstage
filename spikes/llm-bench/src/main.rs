@@ -162,6 +162,7 @@ fn answer(
     backend: &LlamaBackend,
     model: &LlamaModel,
     prompt: &str,
+    add_bos: bool,
 ) -> Result<Answer, Box<dyn Error>> {
     let params = LlamaContextParams::default()
         .with_n_ctx(NonZeroU32::new(N_CTX))
@@ -169,7 +170,7 @@ fn answer(
         .with_n_ubatch(n_batch() as u32);
     let mut ctx = model.new_context(backend, params)?;
     let vocab = model.vocab();
-    let tokens = vocab.tokenize(prompt.as_bytes(), false, true);
+    let tokens = vocab.tokenize(prompt.as_bytes(), add_bos, true);
     if tokens.len() + MAX_NEW_TOKENS > N_CTX as usize {
         return Err(format!("prompt of {} tokens does not fit", tokens.len()).into());
     }
@@ -231,10 +232,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         .and_then(|n| n.parse::<usize>().ok())
         .unwrap_or(1)
         .max(1);
-    let is_qwen3 = path
+    let name = path
         .file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.to_ascii_lowercase().contains("qwen3"));
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let is_qwen3 = name.contains("qwen3");
+    // The Gemma chat template does not write the start-of-text token, so the tokenizer adds it.
+    let add_bos = name.contains("gemma");
+    // llama.cpp's built-in chat templates do not know the Gemma 4 format yet, so the prompt is
+    // written by hand from the template stored in the model file (thinking is off by default).
+    let gemma4_by_hand = name.contains("gemma-4");
 
     let mut backend = LlamaBackend::init()?;
     backend.void_logs();
@@ -256,20 +264,29 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("rss after load: {:.0} MB | {}", rss_mb(), footprint_line());
 
     let template = model.chat_template(None)?;
+    if rest.iter().any(|a| a == "--print-template") {
+        println!("{}", template.to_str()?);
+        return Ok(());
+    }
     let mut peak_rss: f64 = 0.0;
     let mut faithful = 0;
 
     for (index, case) in CASES.iter().enumerate() {
-        let messages = vec![
-            LlamaChatMessage::new("system".into(), SYSTEM.into())?,
-            LlamaChatMessage::new("user".into(), user_message(case.question, repeat))?,
-        ];
-        let mut prompt = model.apply_chat_template(&template, &messages, true)?;
+        let user = user_message(case.question, repeat);
+        let mut prompt = if gemma4_by_hand {
+            format!("<|turn>system\n{SYSTEM}<turn|>\n<|turn>user\n{user}<turn|>\n<|turn>model\n")
+        } else {
+            let messages = vec![
+                LlamaChatMessage::new("system".into(), SYSTEM.into())?,
+                LlamaChatMessage::new("user".into(), user)?,
+            ];
+            model.apply_chat_template(&template, &messages, true)?
+        };
         if is_qwen3 && !think {
             prompt.push_str("<think>\n\n</think>\n\n");
         }
 
-        let result = answer(&backend, &model, &prompt)?;
+        let result = answer(&backend, &model, &prompt, add_bos)?;
         peak_rss = peak_rss.max(rss_mb());
 
         let says_unsupported = result.text.contains("Không có trong tài liệu");
