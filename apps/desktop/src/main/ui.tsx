@@ -1,5 +1,12 @@
 import { motion, useReducedMotion } from "motion/react";
 import { AlertTriangle } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/motion/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
@@ -107,6 +114,49 @@ export function EmptyState({
         {children}
       </p>
       {action}
+    </div>
+  );
+}
+
+/** A titled card of settings rows. */
+export function Section({
+  title,
+  hint,
+  icon,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Card className="bg-card">
+      <CardHeader>
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-9 place-items-center rounded-xl bg-muted text-muted-foreground">
+            {icon}
+          </span>
+          <div className="min-w-0">
+            <CardTitle as="h2">{title}</CardTitle>
+            {hint && <CardDescription>{hint}</CardDescription>}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col divide-y divide-border">{children}</CardContent>
+    </Card>
+  );
+}
+
+/** One setting: a label and hint on the left, its control on the right. */
+export function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-3.5">
+      <div className="flex min-w-0 max-w-prose flex-col gap-0.5">
+        <span className="text-sm font-medium text-foreground">{label}</span>
+        {hint && <span className="text-xs leading-relaxed text-muted-foreground">{hint}</span>}
+      </div>
+      <div className="flex shrink-0 items-center gap-2.5">{children}</div>
     </div>
   );
 }

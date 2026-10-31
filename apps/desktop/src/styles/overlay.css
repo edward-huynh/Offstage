@@ -162,13 +162,23 @@ html[data-view="overlay"] body { overflow: hidden; }
 
 .stop-hint { color: var(--ink-dim); }
 
-/* Interview mode shows the captions over the whole overlay, so the script area holds a note. */
-.interview-note {
+/* The suggested answer fills the script area in interview mode. The captions float over its bottom. */
+.assist {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
   padding: 4px 18px;
   color: var(--ink-dim);
   font-size: 13px;
   line-height: 1.45;
 }
-.interview-note strong { color: var(--ink); font-size: 14px; }
-.interview-note p { margin: 4px 0 0; }
+.assist.with-captions { padding-bottom: calc(42% + 16px); }
+.assist header { display: flex; align-items: center; gap: 10px; }
+.assist strong { color: var(--ink); font-size: 14px; }
+.assist .cloud { font-size: 11px; color: var(--ink-dim); }
+.assist p { margin: 4px 0 0; }
+.assist .asked { color: #7cc4f0; font-size: 12px; }
+.assist .failed { color: var(--cue); }
+.assist ul { margin: 6px 0 0; padding-left: 18px; color: var(--ink); font-size: 16px; line-height: 1.4; }
+.assist li { margin: 0 0 4px; }

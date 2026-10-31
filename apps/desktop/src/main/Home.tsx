@@ -11,7 +11,8 @@ import {
 } from "@/components/motion/card";
 import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { errorMessage, startPlay, type PlaySession } from "../tauri";
+import { errorMessage, startPlay, type AssistantStatus, type PlaySession } from "../tauri";
+import { useAssistantStatus } from "../useAssistant";
 import { useContents } from "../useContents";
 import { useModel } from "../useModel";
 import type { Screen } from "./MainApp";
@@ -24,10 +25,23 @@ function lastEdited(updatedAt: number): string | null {
   return new Date(updatedAt).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
 }
 
+/** One line on whether the assistant will suggest answers. */
+function assistantNote(status: AssistantStatus | null): string {
+  if (!status) return "Trợ lý AI gợi ý câu trả lời cho câu hỏi của đối phương.";
+  if (status.ready) {
+    return status.cloud
+      ? "Trợ lý AI đang bật: câu hỏi của đối phương được gửi qua mạng để gợi ý trả lời."
+      : "Trợ lý AI đang bật và chạy trên máy bạn.";
+  }
+  if (status.enabled) return "Trợ lý AI đã bật nhưng chưa sẵn sàng: thiếu khoá API hoặc model.";
+  return "Trợ lý AI đang tắt. Bật để nhận gợi ý trả lời.";
+}
+
 /** Two ways to start: read a Content, or Play with AI in an Interview. */
 export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
   const contents = useContents();
   const model = useModel();
+  const assistant = useAssistantStatus();
   const [starting, setStarting] = useState<"content" | "interview" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -175,7 +189,16 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
 
             <p className="mt-auto flex items-start gap-2 text-xs leading-relaxed text-muted-foreground">
               <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" />
-              Trợ lý AI gợi ý câu trả lời sẽ có ở bản sau.
+              <span>
+                {assistantNote(assistant)}{" "}
+                <button
+                  type="button"
+                  className="font-medium text-primary underline-offset-2 hover:underline"
+                  onClick={() => onNavigate("settings")}
+                >
+                  Mở Cài đặt
+                </button>
+              </span>
             </p>
           </CardContent>
 

@@ -456,3 +456,102 @@ export async function hotkeyBindings(): Promise<HotkeyBinding[]> {
   }
   return invoke<HotkeyBinding[]>("hotkey_bindings");
 }
+
+/** What the user chose for the assistant. The key is never part of it. */
+export type AssistantConfig = {
+  enabled: boolean;
+  provider_id: string;
+  model: string | null;
+  custom_base_url: string | null;
+};
+
+export type AssistantStatus = {
+  enabled: boolean;
+  provider_id: string;
+  model: string | null;
+  has_key: boolean;
+  needs_key: boolean;
+  /** What is said in the call is sent to another machine. */
+  cloud: boolean;
+  /** Enabled, with a model and a usable key: the next question will be answered. */
+  ready: boolean;
+};
+
+const ASSISTANT_DEFAULTS: AssistantConfig = {
+  enabled: false,
+  provider_id: "openai",
+  model: null,
+  custom_base_url: null,
+};
+
+let browserAssistant: AssistantConfig = ASSISTANT_DEFAULTS;
+
+export async function getAssistantConfig(): Promise<AssistantConfig> {
+  if (!inTauri()) return browserAssistant;
+  return invoke<AssistantConfig>("assistant_get_config");
+}
+
+/** Resolves to what was stored. Turning the assistant on fails when the provider is unusable. */
+export async function setAssistantConfig(config: AssistantConfig): Promise<AssistantConfig> {
+  if (!inTauri()) {
+    browserAssistant = config;
+    return config;
+  }
+  return invoke<AssistantConfig>("assistant_set_config", { config });
+}
+
+export async function assistantStatus(): Promise<AssistantStatus> {
+  if (!inTauri()) {
+    return {
+      enabled: browserAssistant.enabled,
+      provider_id: browserAssistant.provider_id,
+      model: browserAssistant.model,
+      has_key: false,
+      needs_key: true,
+      cloud: true,
+      ready: false,
+    };
+  }
+  return invoke<AssistantStatus>("assistant_status");
+}
+
+/** Saves the key in the system keychain. It cannot be read back. */
+export async function setAssistantKey(providerId: string, key: string): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("assistant_set_key", { providerId, key });
+}
+
+export async function clearAssistantKey(providerId: string): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("assistant_clear_key", { providerId });
+}
+
+/** Checks the saved provider, key and address. Rejects with the reason. */
+export async function testAssistantConnection(): Promise<void> {
+  if (!inTauri()) throw new Error("Chỉ chạy được trong ứng dụng.");
+  await invoke("assistant_test_connection");
+}
+
+export async function listAssistantModels(): Promise<string[]> {
+  if (!inTauri()) return [];
+  return invoke<string[]>("assistant_list_models");
+}
+
+type QuestionEvent = { type: "question_detected"; text: string };
+type AnswerTokenEvent = { type: "answer_token"; token: string };
+type AnswerDoneEvent = { type: "answer_done"; sources: string[] };
+
+export async function onQuestionDetected(handler: (text: string) => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return listen<QuestionEvent>("question_detected", (event) => handler(event.payload.text));
+}
+
+export async function onAnswerToken(handler: (token: string) => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return listen<AnswerTokenEvent>("answer_token", (event) => handler(event.payload.token));
+}
+
+export async function onAnswerDone(handler: () => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return listen<AnswerDoneEvent>("answer_done", () => handler());
+}

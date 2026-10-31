@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import {
   Check,
   Download,
@@ -10,13 +10,6 @@ import {
   Volume2,
 } from "lucide-react";
 import { Button } from "@/components/motion/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/motion/card";
 import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { RangeSlider } from "@/components/motion/range-slider";
 import { Switch } from "@/components/motion/switch";
@@ -32,7 +25,8 @@ import {
 } from "../tauri";
 import { useModel } from "../useModel";
 import { useSettings } from "../useSettings";
-import { ErrorNote, Progress, Screen } from "./ui";
+import { AssistantSettings } from "./AssistantSettings";
+import { ErrorNote, Progress, Row, Screen, Section } from "./ui";
 
 const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
 
@@ -69,47 +63,6 @@ function formatAccelerator(accelerator: string): string {
     .split("+")
     .map((key) => symbols[key] ?? key)
     .join(mac ? " " : " + ");
-}
-
-function Section({
-  title,
-  hint,
-  icon,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  icon: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <Card className="bg-card">
-      <CardHeader>
-        <div className="flex items-center gap-2.5">
-          <span className="grid size-9 place-items-center rounded-xl bg-muted text-muted-foreground">
-            {icon}
-          </span>
-          <div className="min-w-0">
-            <CardTitle as="h2">{title}</CardTitle>
-            {hint && <CardDescription>{hint}</CardDescription>}
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="flex flex-col divide-y divide-border">{children}</CardContent>
-    </Card>
-  );
-}
-
-function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-3.5">
-      <div className="flex min-w-0 max-w-prose flex-col gap-0.5">
-        <span className="text-sm font-medium text-foreground">{label}</span>
-        {hint && <span className="text-xs leading-relaxed text-muted-foreground">{hint}</span>}
-      </div>
-      <div className="flex shrink-0 items-center gap-2.5">{children}</div>
-    </div>
-  );
 }
 
 function SliderRow(props: {
@@ -283,6 +236,8 @@ export function Settings() {
         </Row>
         {model.error && <ErrorNote className="my-3">{model.error}</ErrorNote>}
       </Section>
+
+      <AssistantSettings />
 
       <Section
         title="Âm thanh và quyền"

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AnswerPanel } from "../AnswerPanel";
 import { TranscriptPanel } from "../TranscriptPanel";
 import {
   captureProtection,
@@ -15,6 +16,7 @@ import {
   type Speaker,
 } from "../tauri";
 import { useAutoScroll } from "../useAutoScroll";
+import { useAnswer } from "../useAssistant";
 import { useListening } from "../useListening";
 import { usePlay } from "../usePlay";
 
@@ -30,6 +32,8 @@ export function OverlayApp() {
   const play = usePlay();
   const interview = play.session?.mode === "interview";
   const listening = useListening(captionsOpen);
+  // Read again at each new session: the choice is edited in the main window while this stays alive.
+  const assistant = useAnswer(play.session);
   const toggleSource = listening.toggle;
   const startSources = listening.startAll;
   const isListening = listening.active.me || listening.active.remote;
@@ -294,10 +298,7 @@ export function OverlayApp() {
       )}
 
       {interview ? (
-        <div className="interview-note">
-          <strong>Play with AI</strong>
-          <p>Phụ đề đang chạy bên dưới. Trợ lý AI sẽ gợi ý câu trả lời ở bản sau, hiện chưa có.</p>
-        </div>
+        <AnswerPanel answer={assistant.answer} status={assistant.status} captionsOpen={captionsOpen} />
       ) : (
         <div
           ref={setScroller}
