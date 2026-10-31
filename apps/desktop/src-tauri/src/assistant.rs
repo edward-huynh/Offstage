@@ -73,13 +73,17 @@ fn invalidate(app: &AppHandle) {
     with_state(app, |state| state.provider = None);
 }
 
-/// Stops the answer being written, if any. Used when listening ends.
+/// Stops the answer being written, if any, and starts a new conversation for the provider.
+/// Used when listening ends.
 pub fn cancel_current(app: &AppHandle) {
     with_state(app, |state| {
         if let Some(token) = state.current.take() {
             token.cancel();
         }
         state.history.clear();
+        if let Some(provider) = &state.provider {
+            provider.new_session();
+        }
     });
 }
 

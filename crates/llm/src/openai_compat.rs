@@ -4,7 +4,14 @@
 //! Answers are streamed as server-sent events. A stream can be cancelled at any point, which
 //! is how a newly detected question replaces the answer being written.
 
-use std::time::Duration;
+use std::{
+    process,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use reqwest::{Client, RequestBuilder, Response, Url};
 use serde_json::{json, Value};
@@ -18,11 +25,32 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How much of an unreadable error body is kept for the message.
 const MAX_ERROR_CHARS: usize = 200;
 
+/// Names the app to the provider, as OpenCode asks of third-party clients, instead of a
+/// generic HTTP library.
+const USER_AGENT: &str = concat!("offstage/", env!("CARGO_PKG_VERSION"));
+/// OpenCode Go rejects requests without it. It tells the gateway which requests belong to one
+/// conversation so it can route them together and reuse the prompt cache. Other providers
+/// ignore it.
+const SESSION_HEADER: &str = "x-opencode-session";
+
+/// A fresh id for one conversation. It only has to differ from the others, so it is built
+/// from the clock, the process and a counter rather than from a random number generator.
+pub fn new_session_id() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("ses_{nanos:x}{:x}{count:x}", process::id())
+}
+
 pub struct OpenAiCompat {
     config: ProviderConfig,
     api_key: Option<String>,
     client: Client,
     local: bool,
+    /// Sent with every request. Replaced by [`OpenAiCompat::new_session`].
+    session: Mutex<String>,
 }
 
 impl OpenAiCompat {
@@ -36,6 +64,7 @@ impl OpenAiCompat {
         let local = check_endpoint(&config.base_url)?;
         let client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
+            .user_agent(USER_AGENT)
             .build()
             .map_err(request_error)?;
         Ok(Self {
@@ -43,7 +72,15 @@ impl OpenAiCompat {
             api_key: api_key.filter(|key| !key.trim().is_empty()),
             client,
             local,
+            session: Mutex::new(new_session_id()),
         })
+    }
+
+    /// Starts a new conversation: later requests carry a new session id. Call it when a call ends.
+    pub fn new_session(&self) {
+        if let Ok(mut session) = self.session.lock() {
+            *session = new_session_id();
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -51,6 +88,16 @@ impl OpenAiCompat {
     }
 
     fn authorize(&self, request: RequestBuilder) -> RequestBuilder {
+        let session = self
+            .session
+            .lock()
+            .map(|session| session.clone())
+            .unwrap_or_default();
+        let request = if session.is_empty() {
+            request
+        } else {
+            request.header(SESSION_HEADER, session)
+        };
         match &self.api_key {
             Some(key) => request.bearer_auth(key),
             None => request,
@@ -418,6 +465,16 @@ mod tests {
         let value = json!({"data":[{"id":"b"},{"id":"a"},{"id":"b"},{"object":"x"}]});
         assert_eq!(model_ids(&value), ["a", "b"]);
         assert!(model_ids(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn session_ids_look_like_opencode_ids_and_never_repeat() {
+        let ids: Vec<String> = (0..1_000).map(|_| new_session_id()).collect();
+        assert!(ids.iter().all(|id| id.starts_with("ses_")));
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len());
     }
 
     #[test]

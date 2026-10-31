@@ -240,3 +240,61 @@ async fn an_endpoint_on_this_machine_is_reported_as_local() {
     assert!(llm.is_local());
     assert_eq!(llm.id(), "test");
 }
+
+fn header_of(request: &wiremock::Request, name: &str) -> Option<String> {
+    request
+        .headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+}
+
+#[tokio::test]
+async fn every_request_names_the_app_and_carries_the_same_session_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse(STREAM))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": []})))
+        .mount(&server)
+        .await;
+
+    let llm = OpenAiCompat::new(config(&server, Some("m"), None), None).unwrap();
+    llm.stream_chat(&ask(), &mut |_| {}).await.unwrap();
+    llm.stream_chat(&ask(), &mut |_| {}).await.unwrap();
+    llm.list_models().await.unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 3);
+    let sessions: Vec<_> = requests
+        .iter()
+        .map(|r| header_of(r, "x-opencode-session").expect("session header"))
+        .collect();
+    assert!(sessions[0].starts_with("ses_"));
+    assert!(sessions.iter().all(|s| s == &sessions[0]));
+    for request in &requests {
+        let agent = header_of(request, "user-agent").unwrap();
+        assert!(agent.starts_with("offstage/"), "{agent}");
+    }
+}
+
+#[tokio::test]
+async fn a_new_session_changes_the_id_for_later_requests() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse(STREAM))
+        .mount(&server)
+        .await;
+
+    let llm = OpenAiCompat::new(config(&server, Some("m"), None), None).unwrap();
+    llm.stream_chat(&ask(), &mut |_| {}).await.unwrap();
+    llm.new_session();
+    llm.stream_chat(&ask(), &mut |_| {}).await.unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    let first = header_of(&requests[0], "x-opencode-session").unwrap();
+    let second = header_of(&requests[1], "x-opencode-session").unwrap();
+    assert_ne!(first, second);
+}
