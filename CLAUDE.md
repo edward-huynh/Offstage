@@ -125,7 +125,7 @@ microphone (Me)          ─┴─► VAD ─► STT ─► question detection �
 - Query: embed question (e5 needs `query:` / `passage:` prefixes) → BM25 + vector → RRF fusion → top 4–6 chunks, max ~2000 tokens of context.
 - Prompt: answer only from documents, 3–5 short bullets, same language as the question, say "Không có trong tài liệu." when unsupported, show sources under the answer.
 
-## 8. Current status (end of Phase 2 work, not yet released)
+## 8. Current status (Phase 2 done, Phase 3 cloud assistant in progress, not yet released)
 
 Done:
 - Repo layout, workspace, 5 crates with traits and types.
@@ -134,10 +134,11 @@ Done:
 - Provider presets with tests, Markdown chunker with tests, CI, docs, MIT license.
 - Phase 1 features: persisted settings, global hotkeys, click-through, window position, multiple scripts, old Windows warning.
 - Phase 2 code: capture (`cpal`), resample, VAD + segmenter, whisper engine, model downloader, pipeline, live captions panel (T, 1, 2), macOS permission flow (microphone is asked for up front, system audio via a guided retry).
+- Phase 3 first slice (cloud only, no documents yet): question detection from the remote captions, OpenAI-compatible streaming client, API key in the OS keychain, assistant Settings section, answer panel on the overlay. Off by default; the choice lives in the `assistant_config` key. The local model, the router and RAG are not started.
 
 Verified: `npm run check` and CI (macOS and Windows, bundles uploaded; whisper builds on both, run on 219f5b5); the overlay opens on macOS; the speech pipeline end to end on Metal with synthetic speech, latency and accuracy in `docs/STT-EVAL.md` (STT 0.4 to 0.9 s, Vietnamese WER 13.6% on clean synthetic speech); the macOS bundle carries the microphone and system audio usage descriptions and requires macOS 13.0; release binary 15.6 MiB.
 
-Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS (`docs/COMPATIBILITY.md` does not exist yet); the microphone and loopback sources on real hardware and the permission prompts and settings links (the system audio link points at the Screen & System Audio Recording page and is untested); the captions panel inside the Tauri window (only seen in a browser); accuracy on real human speech; Phase 2 behaviour on Windows beyond compiling.
+Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS (`docs/COMPATIBILITY.md` does not exist yet); the microphone and loopback sources on real hardware and the permission prompts and settings links (the system audio link points at the Screen & System Audio Recording page and is untested); the captions panel inside the Tauri window (only seen in a browser); accuracy on real human speech; Phase 2 behaviour on Windows beyond compiling; the assistant against a real provider (first-token latency, the keychain prompt on an unsigned build, the answer panel in the Tauri window).
 
 ## 9. Roadmap
 
@@ -170,12 +171,12 @@ Estimates assume one developer part-time.
 
 ### Phase 3: LLM + providers (2 weeks)
 - [ ] `crates/llm/local.rs`: llama-cpp-2, model kept in memory, streaming tokens
-- [ ] `crates/llm/openai_compat.rs`: SSE streaming, both error shapes, `list_models`, `test_connection`, cancellation
-- [ ] Keychain storage via `keyring`; env var fallback
+- [x] `crates/llm/openai_compat.rs`: SSE streaming, both error shapes, `list_models`, `test_connection`, cancellation (tested against a mock server; not yet against a real provider)
+- [x] Keychain storage via `keyring`; env var fallback (macOS and Windows only; the keychain path is not yet exercised on a real machine)
 - [ ] Router: per-workspace provider, `local_only`, fallback, timeouts
-- [ ] Question detection: heuristic first (`?`, Vietnamese question words: gì, sao, tại sao, như thế nào, bao nhiêu, có … không, ở đâu, khi nào), LLM classification optional
-- [ ] Settings UI: provider picker, paste key, Test connection, model dropdown from `/models`
-- [ ] Cloud/local indicator (☁️ / 💻) on the overlay
+- [x] Question detection: heuristic first (`?`, Vietnamese question words: gì, sao, tại sao, như thế nào, bao nhiêu, có … không, ở đâu, khi nào), LLM classification optional (heuristic done in `offstage_core::question`)
+- [x] Settings UI: provider picker, paste key, Test connection, model dropdown from `/models`
+- [~] Cloud/local indicator (☁️ / 💻) on the overlay (☁️ "Qua mạng" badge when the endpoint is remote; no 💻 mark for local yet)
 - **Done when**: first token under 2 s after the question ends (GPU or cloud).
 
 ### Phase 4: RAG (2–3 weeks)
