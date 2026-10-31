@@ -317,7 +317,7 @@ pub fn title_for_import(file_stem: &str, content: &str) -> String {
 
 /// Lowercases a letter and strips its Vietnamese accent. Returns `None` for a combining accent
 /// mark, which is dropped (so accents typed as separate marks are ignored too).
-fn fold_char(c: char) -> Option<char> {
+pub(crate) fn fold_char(c: char) -> Option<char> {
     if ('\u{0300}'..='\u{036f}').contains(&c) {
         return None;
     }

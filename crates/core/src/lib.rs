@@ -3,6 +3,7 @@
 pub mod db;
 pub mod knowledge;
 pub mod play;
+pub mod question;
 pub mod scripts;
 pub mod settings;
 

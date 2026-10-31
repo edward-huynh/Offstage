@@ -2,6 +2,7 @@
 //! (OpenAI, OpenCode Zen/Go, OpenRouter, Ollama, LM Studio...).
 
 pub mod presets;
+pub mod prompt;
 
 use serde::{Deserialize, Serialize};
 
