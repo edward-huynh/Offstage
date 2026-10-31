@@ -1,6 +1,6 @@
 //! Spike: how a small local model answers a RAG question on this machine.
 //!
-//! Usage: `offstage-llm-bench <model.gguf> [--think] [--repeat N]`
+//! Usage: `offstage-llm-bench <model.gguf> [--think] [--repeat N] [--english] [--voice] [--hint]`
 //!
 //! Loads the model, then answers a fixed set of Vietnamese and English questions from a few
 //! retrieved passages, the way the assistant would. For each answer it prints the prompt size,
@@ -9,6 +9,10 @@
 //!
 //! Qwen3 starts with a long "thinking" section unless it is told not to, which would ruin the
 //! time to first token, so the spike closes that section up front. `--think` leaves it open.
+//! `--english` writes the instructions in English (the documents stay Vietnamese). `--voice` also
+//! tells the model to speak as the user, in the language of the question.
+//! `--hint` adds "Answer in English." or "Trả lời bằng tiếng Việt." right after the question, as
+//! the app could once it has detected the language of the question itself.
 //! `--repeat N` sends the passages N times, to see how the time to first token grows with the
 //! amount of retrieved text (the real retriever sends 4 to 6 passages of about 1,600 characters).
 
@@ -45,6 +49,18 @@ const SYSTEM: &str = "Bạn là trợ lý trong một cuộc gọi trực tiếp
 Viết 3 đến 5 gạch đầu dòng ngắn, mỗi dòng bắt đầu bằng \"- \". Dùng cùng ngôn ngữ với câu hỏi. \
 Nếu TÀI LIỆU không có thông tin để trả lời, chỉ viết đúng một dòng: Không có trong tài liệu.";
 
+/// The same rules in English.
+const SYSTEM_EN: &str = "You assist a person during a live call. Answer only from the DOCUMENTS section. \
+Write 3 to 5 short bullet points, each starting with \"- \". Use the same language as the question. \
+If the DOCUMENTS do not contain the information to answer, write exactly one line: Không có trong tài liệu.";
+
+/// Adds who is speaking and the language rule, which the first two versions left implicit.
+const SYSTEM_EN_VOICE: &str = "You assist a person during a live call. The person will read your answer aloud as \
+their own words, so write in the first person (\"I\", or \"tôi\" in Vietnamese), never \"you\" or \"the candidate\". \
+Answer only from the DOCUMENTS section. Write 3 to 5 short bullet points, each starting with \"- \". \
+Reply in the language of the QUESTION, whatever language the DOCUMENTS use. \
+If the DOCUMENTS do not contain the information to answer, write exactly one line: Không có trong tài liệu.";
+
 /// Passages as the retriever would return them: a source label and the text.
 const PASSAGES: &[(&str, &str)] = &[
     (
@@ -78,6 +94,8 @@ struct Case {
     expect_any: &'static [&'static str],
     /// The documents do not cover it, so the model must say so instead of inventing something.
     unanswerable: bool,
+    /// The question is in English, so the answer must be too.
+    english: bool,
 }
 
 const CASES: &[Case] = &[
@@ -85,35 +103,41 @@ const CASES: &[Case] = &[
         question: "Bạn có kinh nghiệm với Rust không?",
         expect_any: &["hai năm", "2 năm", "Rust"],
         unanswerable: false,
+        english: false,
     },
     Case {
         question: "Mô tả dự án gần đây nhất của bạn.",
         expect_any: &["Offstage"],
         unanswerable: false,
+        english: false,
     },
     Case {
         question: "What is your experience with real-time audio?",
         expect_any: &["45 ms", "180 ms", "Âm Sắc", "Rust"],
         unanswerable: false,
+        english: true,
     },
     Case {
         question: "Bạn đã làm việc với Kubernetes bao lâu rồi?",
         expect_any: &[],
         unanswerable: true,
+        english: false,
     },
     Case {
         question: "Mức lương mong muốn của bạn là bao nhiêu?",
         expect_any: &[],
         unanswerable: true,
+        english: false,
     },
     Case {
         question: "Bạn đã giảm độ trễ xuống bao nhiêu và bằng cách nào?",
         expect_any: &["45 ms", "180 ms"],
         unanswerable: false,
+        english: false,
     },
 ];
 
-fn user_message(question: &str, repeat: usize) -> String {
+fn user_message(question: &str, repeat: usize, english_labels: bool, hint: Option<&str>) -> String {
     let documents: Vec<String> = (1..=repeat)
         .flat_map(|round| {
             PASSAGES
@@ -121,7 +145,16 @@ fn user_message(question: &str, repeat: usize) -> String {
                 .map(move |(source, text)| format!("[{source} #{round}]\n{text}"))
         })
         .collect();
-    format!("TÀI LIỆU:\n{}\n\nCÂU HỎI: {question}", documents.join("\n\n"))
+    let mut message = if english_labels {
+        format!("DOCUMENTS:\n{}\n\nQUESTION: {question}", documents.join("\n\n"))
+    } else {
+        format!("TÀI LIỆU:\n{}\n\nCÂU HỎI: {question}", documents.join("\n\n"))
+    };
+    if let Some(hint) = hint {
+        message.push_str("\n\n");
+        message.push_str(hint);
+    }
+    message
 }
 
 /// Resident memory of this process, in MB. Unified memory on Apple silicon means the model's
@@ -134,6 +167,20 @@ fn rss_mb() -> f64 {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .and_then(|text| text.trim().parse::<f64>().ok())
         .map_or(f64::NAN, |kb| kb / 1024.0)
+}
+
+/// An English question must get an English answer: any Vietnamese letter is a miss.
+fn language_ok(case: &Case, text: &str) -> bool {
+    !case.english || !text.chars().any(|c| c.is_alphabetic() && !c.is_ascii())
+}
+
+/// The user reads the answer as their own words, so it must not address them as "you" or call
+/// them "the candidate". Refusals have no voice to check.
+fn voice_ok(text: &str) -> bool {
+    text.lines().all(|line| {
+        let line = line.trim_start_matches(['-', ' ']).to_lowercase();
+        !(line.starts_with("bạn ") || line.starts_with("you ") || line.contains("ứng viên") || line.contains("the candidate"))
+    })
 }
 
 fn footprint_line() -> String {
@@ -225,6 +272,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let path: PathBuf = args.next().ok_or("usage: offstage-llm-bench <model.gguf> [--think]")?.into();
     let rest: Vec<String> = args.collect();
     let think = rest.iter().any(|a| a == "--think");
+    let english = rest.iter().any(|a| a == "--english" || a == "--voice");
+    let voice = rest.iter().any(|a| a == "--voice");
+    let system = match (english, voice) {
+        (_, true) => SYSTEM_EN_VOICE,
+        (true, false) => SYSTEM_EN,
+        _ => SYSTEM,
+    };
+    let hint = rest.iter().any(|a| a == "--hint");
     let repeat = rest
         .iter()
         .position(|a| a == "--repeat")
@@ -270,14 +325,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let mut peak_rss: f64 = 0.0;
     let mut faithful = 0;
+    let mut language = 0;
+    let mut voice = 0;
+    let mut spoken = 0;
 
     for (index, case) in CASES.iter().enumerate() {
-        let user = user_message(case.question, repeat);
+        let hint_text = hint.then_some(if case.english {
+            "Answer in English."
+        } else {
+            "Trả lời bằng tiếng Việt."
+        });
+        let user = user_message(case.question, repeat, english, hint_text);
         let mut prompt = if gemma4_by_hand {
-            format!("<|turn>system\n{SYSTEM}<turn|>\n<|turn>user\n{user}<turn|>\n<|turn>model\n")
+            format!("<|turn>system\n{system}<turn|>\n<|turn>user\n{user}<turn|>\n<|turn>model\n")
         } else {
             let messages = vec![
-                LlamaChatMessage::new("system".into(), SYSTEM.into())?,
+                LlamaChatMessage::new("system".into(), system.into())?,
                 LlamaChatMessage::new("user".into(), user)?,
             ];
             model.apply_chat_template(&template, &messages, true)?
@@ -300,6 +363,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .any(|needle| result.text.to_lowercase().contains(&needle.to_lowercase()))
         };
         faithful += usize::from(ok);
+        let lang = language_ok(case, &result.text);
+        language += usize::from(lang);
+        if !says_unsupported {
+            spoken += 1;
+            voice += usize::from(voice_ok(&result.text));
+        }
 
         println!("\n--- {}/{}: {}", index + 1, CASES.len(), case.question);
         println!(
@@ -310,11 +379,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             result.tokens_per_second,
             if ok { "OK" } else { "CHECK" }
         );
+        if !lang {
+            println!("(language: the question is in English but the answer is not)");
+        }
+        if !says_unsupported && !voice_ok(&result.text) {
+            println!("(voice: the answer addresses the user as \"you\" or \"the candidate\")");
+        }
         println!("{}", result.text);
     }
 
     println!(
-        "\nsummary: {faithful}/{} answers faithful by the keyword check | peak rss {:.0} MB | {}",
+        "\nsummary: {faithful}/{} faithful by keywords | language {language}/{} | voice {voice}/{spoken} | peak rss {:.0} MB | {}",
+        CASES.len(),
         CASES.len(),
         peak_rss,
         footprint_line()
