@@ -1,0 +1,12 @@
+data: {"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"- Hai năm"},"finish_reason":null}]}
+
+: keep-alive
+
+data: {"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" dùng Rust\n- Tập trung vào âm thanh"},"finish_reason":null}]}
+
+data: {"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+

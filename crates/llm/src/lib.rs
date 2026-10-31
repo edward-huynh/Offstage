@@ -1,8 +1,10 @@
 //! LLM providers: local (llama.cpp) and any OpenAI-compatible endpoint
 //! (OpenAI, OpenCode Zen/Go, OpenRouter, Ollama, LM Studio...).
 
+pub mod openai_compat;
 pub mod presets;
 pub mod prompt;
+pub mod secrets;
 
 use serde::{Deserialize, Serialize};
 
@@ -49,6 +51,10 @@ pub enum LlmError {
     Auth(String),
     #[error("request failed: {0}")]
     Request(String),
+    /// The OS keychain, or an environment variable, could not be read or written.
+    /// The message never contains the key.
+    #[error("key storage error: {0}")]
+    Keychain(String),
     #[error("cancelled")]
     Cancelled,
 }
@@ -63,6 +69,7 @@ pub trait LlmProvider: Send + Sync {
     async fn stream_chat(
         &self,
         messages: &[ChatMessage],
-        on_token: &mut (dyn FnMut(&str) + Send),
+        // Spelled out because `async_trait` would otherwise tie the `&str` to one lifetime.
+        on_token: &mut (dyn for<'a> FnMut(&'a str) + Send),
     ) -> Result<String, LlmError>;
 }

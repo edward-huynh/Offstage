@@ -6,5 +6,22 @@ license.workspace = true
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
+# rustls instead of native-tls: no OpenSSL to package on Windows/macOS.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+tokio-util = "0.7"
+
+# API keys live in the OS keychain. Other systems get an error instead of a silent in-memory
+# store, which would forget the key on exit.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
