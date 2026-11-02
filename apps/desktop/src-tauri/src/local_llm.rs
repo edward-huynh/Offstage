@@ -10,12 +10,14 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use offstage_core::AppEvent;
 use offstage_llm::{
-    config::AssistantConfig,
+    config::{AssistantConfig, AUTO_LOCAL_MODEL},
     local::LocalLlm,
     router::{ChatBackend, LocalSource},
     LlmError,
 };
-use offstage_models::{local_llms, CancellationToken, Downloader, ModelSpec, Progress};
+use offstage_models::{
+    local_llms, recommended_llm, CancellationToken, Downloader, ModelSpec, Progress,
+};
 use serde::Serialize;
 use tauri::{async_runtime::Mutex, AppHandle, Manager, State};
 
@@ -38,7 +40,32 @@ pub struct LocalModel {
     download: std::sync::Mutex<Option<CancellationToken>>,
 }
 
+/// The memory of this computer in bytes, or 0 if it cannot be read. Read once: it does not change.
+fn total_ram() -> u64 {
+    static RAM: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *RAM.get_or_init(|| {
+        let mut system = sysinfo::System::new();
+        system.refresh_memory();
+        system.total_memory()
+    })
+}
+
+/// The id of the model a setting stands for: [`AUTO_LOCAL_MODEL`] becomes the one that suits the
+/// memory of the computer, anything else is already an id.
+fn resolve_with(id: &str, ram_bytes: u64) -> String {
+    if id == AUTO_LOCAL_MODEL {
+        recommended_llm(ram_bytes).id
+    } else {
+        id.to_owned()
+    }
+}
+
+fn resolve(id: &str) -> String {
+    resolve_with(id, total_ram())
+}
+
 fn spec_of(id: &str) -> Option<ModelSpec> {
+    let id = resolve(id);
     local_llms().into_iter().find(|spec| spec.id == id)
 }
 
@@ -184,6 +211,10 @@ pub struct LocalModelInfo {
 #[derive(Debug, Serialize)]
 pub struct LocalLlmInfo {
     pub models: Vec<LocalModelInfo>,
+    /// The memory of this computer in bytes, 0 if it could not be read.
+    pub ram_bytes: u64,
+    /// The id of the model that "automatic" stands for on this computer.
+    pub recommended: String,
     /// The program that runs the model is next to the app. False in a development build that did
     /// not build it.
     pub engine_found: bool,
@@ -202,6 +233,8 @@ pub fn local_llm_info(app: AppHandle) -> Result<LocalLlmInfo, String> {
                 id: spec.id,
             })
             .collect(),
+        ram_bytes: total_ram(),
+        recommended: resolve(AUTO_LOCAL_MODEL),
         engine_found: host_path().is_ok_and(|path| path.is_file()),
     })
 }
@@ -214,6 +247,7 @@ pub async fn download_local_llm(
     state: State<'_, LocalModel>,
     id: String,
 ) -> Result<(), String> {
+    // The screen can ask for "automatic": the file to fetch is the model that stands for.
     let spec = spec_of(&id).ok_or_else(|| format!("unknown local model {id:?}"))?;
     let dir = models_dir(&app)?;
     let cancel = CancellationToken::new();
@@ -273,9 +307,27 @@ mod tests {
     }
 
     #[test]
-    fn the_default_model_exists_among_the_presets() {
-        assert!(spec_of(offstage_llm::config::DEFAULT_LOCAL_MODEL).is_some());
+    fn automatic_is_a_real_model_and_a_named_model_is_left_alone() {
+        // Whatever the memory of the machine running the test, "auto" is one of the presets.
+        assert!(spec_of(AUTO_LOCAL_MODEL).is_some());
         assert!(spec_of("nope").is_none());
+        assert_eq!(
+            resolve_with("qwen3-1.7b-q4_k_m", 64 << 30),
+            "qwen3-1.7b-q4_k_m"
+        );
+        assert_eq!(resolve_with("qwen3-4b-q4_k_m", 0), "qwen3-4b-q4_k_m");
+    }
+
+    #[test]
+    fn automatic_follows_the_memory() {
+        assert_eq!(resolve_with(AUTO_LOCAL_MODEL, 8 << 30), "qwen3-1.7b-q4_k_m");
+        assert_eq!(resolve_with(AUTO_LOCAL_MODEL, 16 << 30), "qwen3-4b-q4_k_m");
+        assert_eq!(resolve_with(AUTO_LOCAL_MODEL, 0), "qwen3-1.7b-q4_k_m");
+    }
+
+    #[test]
+    fn the_memory_of_this_machine_can_be_read() {
+        assert!(total_ram() > 512 << 20, "{}", total_ram());
     }
 
     #[test]

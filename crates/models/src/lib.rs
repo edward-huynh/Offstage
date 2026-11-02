@@ -11,7 +11,7 @@ pub use download::{Downloader, Progress, ProgressSink};
 pub use error::ModelError;
 pub use presets::{
     all as presets, find as find_preset, local_llms, multilingual_e5_small, qwen3_1_7b, qwen3_4b,
-    whisper_small_q5,
+    recommended_llm, whisper_small_q5, QWEN3_4B_MIN_RAM,
 };
 pub use spec::ModelSpec;
 pub use tokio_util::sync::CancellationToken;

@@ -475,6 +475,10 @@ export type LocalModelInfo = {
 
 export type LocalLlmInfo = {
   models: LocalModelInfo[];
+  /** The memory of this computer in bytes, 0 if it could not be read. */
+  ram_bytes: number;
+  /** The id of the model that "automatic" stands for on this computer. */
+  recommended: string;
   /** The program that runs the model is next to the app. False in a development build that did not build it. */
   engine_found: boolean;
 };
@@ -486,6 +490,8 @@ export async function localLlmInfo(): Promise<LocalLlmInfo | null> {
         { id: "qwen3-4b-q4_k_m", label: "Qwen3 4B", size: 2_497_280_256, license: "Apache-2.0", installed: false },
         { id: "qwen3-1.7b-q4_k_m", label: "Qwen3 1.7B", size: 1_107_409_472, license: "Apache-2.0", installed: false },
       ],
+      ram_bytes: 16 * 1024 ** 3,
+      recommended: "qwen3-4b-q4_k_m",
       engine_found: true,
     };
   }
@@ -579,7 +585,7 @@ export type AssistantConfig = {
   local_only: boolean;
   /** When the provider fails, the model on this machine answers. */
   fallback_to_local: boolean;
-  /** Id of the model on this machine, see `LocalModelInfo`. */
+  /** Id of the model on this machine, see `LocalModelInfo`, or `"auto"`: the one that suits this computer's memory. */
   local_model: string;
 };
 
@@ -599,6 +605,9 @@ export type AssistantStatus = {
   fallback: boolean;
 };
 
+/** The `local_model` setting that lets the app pick the model by the computer's memory. */
+export const AUTO_LOCAL_MODEL = "auto";
+
 const ASSISTANT_DEFAULTS: AssistantConfig = {
   enabled: false,
   provider_id: "openai",
@@ -606,7 +615,7 @@ const ASSISTANT_DEFAULTS: AssistantConfig = {
   custom_base_url: null,
   local_only: false,
   fallback_to_local: true,
-  local_model: "qwen3-4b-q4_k_m",
+  local_model: AUTO_LOCAL_MODEL,
 };
 
 let browserAssistant: AssistantConfig = ASSISTANT_DEFAULTS;

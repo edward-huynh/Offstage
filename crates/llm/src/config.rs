@@ -28,12 +28,13 @@ pub struct AssistantConfig {
     pub local_only: bool,
     /// When the provider fails, answer with the model on this machine (if one is installed).
     pub fallback_to_local: bool,
-    /// Id of the model on this machine, from `offstage-models`.
+    /// Id of the model on this machine from `offstage-models`, or [`AUTO_LOCAL_MODEL`].
     pub local_model: String,
 }
 
-/// The model on this machine that is chosen until the user picks another.
-pub const DEFAULT_LOCAL_MODEL: &str = "qwen3-4b-q4_k_m";
+/// The local model setting that means "the one that suits this computer's memory". The app turns it
+/// into a model id when it needs one. This is the choice until the user picks a model.
+pub const AUTO_LOCAL_MODEL: &str = "auto";
 
 impl Default for AssistantConfig {
     fn default() -> Self {
@@ -44,7 +45,7 @@ impl Default for AssistantConfig {
             custom_base_url: None,
             local_only: false,
             fallback_to_local: true,
-            local_model: DEFAULT_LOCAL_MODEL.into(),
+            local_model: AUTO_LOCAL_MODEL.into(),
         }
     }
 }
@@ -120,12 +121,12 @@ mod tests {
         let c = AssistantConfig::default();
         assert!(!c.local_only);
         assert!(c.fallback_to_local);
-        assert_eq!(c.local_model, DEFAULT_LOCAL_MODEL);
+        assert_eq!(c.local_model, AUTO_LOCAL_MODEL);
         // A value saved before these options existed gets the same defaults.
         let old: AssistantConfig =
             serde_json::from_str(r#"{"enabled":true,"provider_id":"openai"}"#).unwrap();
         assert!(!old.local_only && old.fallback_to_local);
-        assert_eq!(old.local_model, DEFAULT_LOCAL_MODEL);
+        assert_eq!(old.local_model, AUTO_LOCAL_MODEL);
     }
 
     #[test]

@@ -121,6 +121,23 @@ pub fn local_llms() -> Vec<ModelSpec> {
     vec![qwen3_4b(), qwen3_1_7b()]
 }
 
+/// The least RAM, in bytes, for which the 4B model is recommended. The model takes 2.5 GB when
+/// loaded and 3.0 GB while writing an answer, on top of the speech model, the embedding model, the
+/// call application and the system. 16 GB machines report a little under 16 GiB on some systems,
+/// so the line sits at 15 GiB.
+pub const QWEN3_4B_MIN_RAM: u64 = 15 * 1024 * 1024 * 1024;
+
+/// The local language model that suits a computer with `total_ram_bytes` of memory: the 4B model
+/// from 15 GiB up, the 1.7B model (half the memory, faster, less faithful) below that or when the
+/// memory could not be read (`0`), where the lighter one is the safe guess.
+pub fn recommended_llm(total_ram_bytes: u64) -> ModelSpec {
+    if total_ram_bytes >= QWEN3_4B_MIN_RAM {
+        qwen3_4b()
+    } else {
+        qwen3_1_7b()
+    }
+}
+
 pub fn all() -> Vec<ModelSpec> {
     let mut all = vec![whisper_small_q5()];
     all.extend(multilingual_e5_small());
@@ -158,6 +175,19 @@ mod tests {
         names.sort();
         names.dedup();
         assert_eq!(names.len(), 5);
+    }
+
+    #[test]
+    fn the_recommended_model_follows_the_memory_with_the_lighter_one_when_unsure() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        assert_eq!(recommended_llm(8 * GIB).id, "qwen3-1.7b-q4_k_m");
+        assert_eq!(recommended_llm(12 * GIB).id, "qwen3-1.7b-q4_k_m");
+        // A "16 GB" machine that reports 15.7 GiB still gets the 4B model.
+        assert_eq!(recommended_llm(15 * GIB + GIB / 2).id, "qwen3-4b-q4_k_m");
+        assert_eq!(recommended_llm(16 * GIB).id, "qwen3-4b-q4_k_m");
+        assert_eq!(recommended_llm(64 * GIB).id, "qwen3-4b-q4_k_m");
+        assert_eq!(recommended_llm(15 * GIB - 1).id, "qwen3-1.7b-q4_k_m");
+        assert_eq!(recommended_llm(0).id, "qwen3-1.7b-q4_k_m", "unknown memory");
     }
 
     #[test]

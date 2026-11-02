@@ -4,6 +4,7 @@ import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { Switch } from "@/components/motion/switch";
+import { AUTO_LOCAL_MODEL } from "../tauri";
 import { useAssistantSettings } from "../useAssistant";
 import { useLocalLlm } from "../useLocalLlm";
 import { ErrorNote, Progress, Row, Section } from "./ui";
@@ -19,6 +20,7 @@ const PROVIDERS: { id: string; label: string }[] = [
 
 const gigabytes = (bytes: number) => (bytes / 1_000_000_000).toFixed(1).replace(".", ",");
 const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
+const gibibytes = (bytes: number) => Math.round(bytes / 1024 ** 3);
 
 const SELECT_CLASS =
   "h-9 max-w-64 rounded-lg border border-border bg-background px-2.5 text-sm text-foreground";
@@ -171,7 +173,11 @@ export function AssistantSettings() {
         label="Model trên máy"
         hint={
           local.info
-            ? "Chạy bằng llama.cpp, trong một tiến trình riêng chỉ chạy khi đang nghe. Bản 4B chính xác hơn, bản 1.7B nhanh hơn và nhẹ hơn."
+            ? `${
+                local.info.ram_bytes > 0
+                  ? `Máy bạn có ${gibibytes(local.info.ram_bytes)} GB RAM. `
+                  : "Không đọc được dung lượng RAM của máy. "
+              }Bản 4B chính xác hơn nhưng dùng khoảng 3 GB RAM khi đang nghe. Bản 1.7B dùng khoảng 1,6 GB và nhanh hơn. Chạy bằng llama.cpp, trong một tiến trình riêng chỉ chạy khi đang nghe.`
             : undefined
         }
       >
@@ -182,12 +188,12 @@ export function AssistantSettings() {
             onValueChange={(id) => void a.change({ local_model: id })}
             aria-label="Model trên máy"
           >
+            <RadioGroupItem
+              value={AUTO_LOCAL_MODEL}
+              label={`Tự chọn (${local.info.models.find((m) => m.id === local.info?.recommended)?.label ?? "…"})`}
+            />
             {local.info.models.map((m) => (
-              <RadioGroupItem
-                key={m.id}
-                value={m.id}
-                label={`${m.label} (${gigabytes(m.size)} GB)`}
-              />
+              <RadioGroupItem key={m.id} value={m.id} label={`${m.label} (${gigabytes(m.size)} GB)`} />
             ))}
           </RadioGroup>
         )}
@@ -195,7 +201,9 @@ export function AssistantSettings() {
 
       {local.info && (
         <LocalModelCard
-          model={local.info.models.find((m) => m.id === config.local_model)}
+          model={local.info.models.find(
+            (m) => m.id === (config.local_model === AUTO_LOCAL_MODEL ? local.info?.recommended : config.local_model),
+          )}
           progress={local.progress}
           engineFound={local.info.engine_found}
           error={local.error}
