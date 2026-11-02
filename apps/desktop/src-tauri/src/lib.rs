@@ -463,12 +463,13 @@ pub fn run() {
             app.manage(knowledge::Knowledge(Arc::new(Mutex::new(
                 KnowledgeStore::new(db, data_dir.join("knowledge")),
             ))));
-            rag::index_missing(app.handle());
-            embedding::embed_pending_in_background(app.handle());
             app.manage(listening::Listening::default());
             app.manage(embedding::Embedding::default());
             app.manage(assistant::Assistant::default());
             app.manage(play::Play::default());
+            // After every state above exists: reading documents and making vectors look them up.
+            rag::index_missing(app.handle());
+            embedding::embed_pending_in_background(app.handle());
             seed_sample_script(app.handle(), &app.state::<Scripts>());
 
             // Belt and braces: config already sets contentProtected, enforce it at runtime too.

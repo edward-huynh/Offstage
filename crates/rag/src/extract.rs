@@ -68,9 +68,121 @@ fn normalize(text: &str) -> String {
 
 fn pdf(bytes: &[u8]) -> Result<String, ExtractError> {
     // The parser can panic on a damaged file. That must end in a message, not a crash.
-    panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes))
+    panic::catch_unwind(|| pdf_text(bytes))
         .map_err(|_| ExtractError::Unreadable("tệp PDF bị hỏng".to_owned()))?
         .map_err(|e| ExtractError::Unreadable(e.to_string()))
+}
+
+fn pdf_text(bytes: &[u8]) -> Result<String, pdf_extract::OutputError> {
+    let mut doc = pdf_extract::Document::load_mem(bytes)?;
+    if doc.is_encrypted() {
+        // Many PDFs are "encrypted" with an empty password only to forbid copying or printing.
+        doc.decrypt("")
+            .map_err(pdf_extract::OutputError::PdfError)?;
+    }
+    let mut out = PdfText::default();
+    pdf_extract::output_doc(&doc, &mut out)?;
+    // A gap where a glyph's width was off can still leave doubled spaces.
+    Ok(out
+        .text
+        .lines()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+/// A gap between two runs of text, in font sizes, above which a space is written. The default
+/// of `pdf-extract` is 0.1, which is below the error in the widths of Vietnamese letters in
+/// PDFs printed by Chrome: a gap of 0.14 after "ứ" split "ứng" into "ứ ng". Real word gaps are
+/// 0.25 and more.
+const PDF_SPACE_GAP: f64 = 0.25;
+
+/// Collects the text of a PDF like `pdf-extract`'s own plain text output, with two changes: the
+/// gap that counts as a space is wider ([`PDF_SPACE_GAP`]), and a glyph that is a line break (the
+/// space of a heading in some PDFs maps to one) is a space, since line breaks come from where the
+/// text sits on the page.
+struct PdfText {
+    text: String,
+    flip: pdf_extract::Transform,
+    last_end: f64,
+    last_y: f64,
+    word_start: bool,
+}
+
+impl Default for PdfText {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            flip: pdf_extract::Transform::identity(),
+            last_end: 100_000.0,
+            last_y: 0.0,
+            word_start: false,
+        }
+    }
+}
+
+impl pdf_extract::OutputDev for PdfText {
+    fn begin_page(
+        &mut self,
+        _page: u32,
+        media_box: &pdf_extract::MediaBox,
+        _art_box: Option<(f64, f64, f64, f64)>,
+    ) -> Result<(), pdf_extract::OutputError> {
+        self.flip =
+            pdf_extract::Transform::row_major(1., 0., 0., -1., 0., media_box.ury - media_box.lly);
+        Ok(())
+    }
+
+    fn end_page(&mut self) -> Result<(), pdf_extract::OutputError> {
+        Ok(())
+    }
+
+    fn output_character(
+        &mut self,
+        trm: &pdf_extract::Transform,
+        width: f64,
+        _spacing: f64,
+        font_size: f64,
+        glyph: &str,
+    ) -> Result<(), pdf_extract::OutputError> {
+        let position = trm.post_transform(&self.flip);
+        // The side of the square that has the area of the glyph's box.
+        let size = ((font_size * (trm.m11 + trm.m21)) * (font_size * (trm.m12 + trm.m22))).sqrt();
+        let (x, y) = (position.m31, position.m32);
+        if self.word_start {
+            if (y - self.last_y).abs() > size * 1.5 {
+                self.text.push('\n');
+            }
+            // Moved to the left and down: a new line.
+            if x < self.last_end && (y - self.last_y).abs() > size * 0.5 {
+                self.text.push('\n');
+            }
+            if x > self.last_end + size * PDF_SPACE_GAP {
+                self.text.push(' ');
+            }
+        }
+        match glyph {
+            "\n" | "\r" | "\u{c}" | "\t" => self.text.push(' '),
+            other => self.text.push_str(other),
+        }
+        self.word_start = false;
+        self.last_y = y;
+        self.last_end = x + width * size;
+        Ok(())
+    }
+
+    fn begin_word(&mut self) -> Result<(), pdf_extract::OutputError> {
+        self.word_start = true;
+        Ok(())
+    }
+
+    fn end_word(&mut self) -> Result<(), pdf_extract::OutputError> {
+        Ok(())
+    }
+
+    fn end_line(&mut self) -> Result<(), pdf_extract::OutputError> {
+        Ok(())
+    }
 }
 
 fn docx(bytes: &[u8]) -> Result<String, ExtractError> {

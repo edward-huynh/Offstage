@@ -112,7 +112,7 @@ microphone (Me)          ─┴─► VAD ─► STT ─► question detection �
 - `ApiStyle`: `ChatCompletions` (default), `Responses`, `AnthropicMessages`.
 - Built-in presets:
   - OpenAI: `https://api.openai.com/v1`
-  - OpenCode Zen (pay per use): `https://opencode.ai/zen/v1`. Most models via `/chat/completions`; GPT models via `/responses`, Claude models via `/messages`.
+  - OpenCode Zen (pay per use): `https://opencode.ai/zen/v1`. The native API differs per model (GPT via `/responses`, Claude via `/messages`), but the OpenCode docs (read 2026-11-02) say every text model also works through `/chat/completions`, so the client only speaks that. The docs now list base URLs under `https://opencode.ai/inference/...`, while `/zen/v1` and `/zen/go/v1` still answer `GET /models`.
   - OpenCode Go (subscription): `https://opencode.ai/zen/go/v1`
   - Zen and Go share one API key (`keychain:opencode`).
 - OpenCode returns a custom error shape (`{"type":"error","error":{"type":"AuthError","message":...}}`). The error parser must handle both this and the standard OpenAI shape.
@@ -143,7 +143,7 @@ Verified: `npm run check` and CI (macOS and Windows, bundles uploaded; whisper b
 
 **Binary size, accepted:** with embeddings the macOS release binary is 49.8 MiB (38.4 MiB stripped) instead of 18.1 MiB, because ONNX Runtime is linked statically (`ort`'s prebuilt `libonnxruntime.a` is 80 MB before linking). Decided on 2026-11-02 to keep it rather than download the runtime on first use (`ort` feature `load-dynamic`) or switch to a pure-Rust engine (`candle`). Cheap ways to shrink it later: `strip = true` and LTO in the release profile. Measured on macOS arm64 with no `strip` or LTO set.
 
-Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS (`docs/COMPATIBILITY.md` does not exist yet); the microphone and loopback sources on real hardware and the permission prompts and settings links (the system audio link points at the Screen & System Audio Recording page and is untested); the captions panel inside the Tauri window (only seen in a browser); accuracy on real human speech; Phase 2 behaviour on Windows beyond compiling; the assistant against a real provider (first-token latency, the keychain prompt on an unsigned build, the answer panel in the Tauri window).
+Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS (`docs/COMPATIBILITY.md` is a checklist with no results yet); the microphone and loopback sources on real hardware and the permission prompts and settings links (the system audio link points at the Screen & System Audio Recording page and is untested); the captions panel inside the Tauri window (only seen in a browser); accuracy on real human speech; Phase 2 behaviour on Windows beyond compiling; the assistant against a real provider (first-token latency, the keychain prompt on an unsigned build, the answer panel in the Tauri window).
 
 ## 9. Roadmap
 
@@ -210,7 +210,7 @@ Estimates assume one developer part-time.
 - Practice mode: app asks questions from the documents, user answers by voice, app reviews the answer
 - Token cost tracking for cloud providers
 - Reranker (bge-reranker-v2-m3), OCR for scanned PDFs
-- `/responses` and `/messages` API styles for Zen GPT/Claude models
+- `/responses` and `/messages` API styles for Zen GPT/Claude models. Probably not needed: the OpenCode docs (read 2026-11-02) say every text model also answers through `chat/completions`, which Console translates. Not tried with a key; if a GPT or Claude model fails, this is the fix
 - Live translation vi ↔ en
 - Plugins for providers and document sources (Notion, Google Drive)
 - Linux support (Wayland makes capture exclusion hard)
