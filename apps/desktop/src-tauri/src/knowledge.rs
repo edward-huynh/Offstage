@@ -45,9 +45,13 @@ fn with_store<T>(
 }
 
 #[tauri::command]
-pub async fn list_knowledge(knowledge: State<'_, Knowledge>) -> Result<Vec<KnowledgeDoc>, String> {
+pub async fn list_knowledge(
+    app: AppHandle,
+    knowledge: State<'_, Knowledge>,
+) -> Result<Vec<KnowledgeDoc>, String> {
+    let workspace = crate::workspaces::active(&app)?.id;
     let store = knowledge.0.clone();
-    crate::off_main(move || with_store(&store, |s| s.list())).await
+    crate::off_main(move || with_store(&store, |s| s.list_in(&workspace))).await
 }
 
 #[tauri::command]
@@ -65,9 +69,12 @@ pub async fn create_knowledge(
     kind: KnowledgeKind,
     text: String,
 ) -> Result<KnowledgeDoc, String> {
+    let workspace = crate::workspaces::active(&app)?.id;
     let store = knowledge.0.clone();
-    let doc =
-        crate::off_main(move || with_store(&store, |s| s.create(&title, kind, &text))).await?;
+    let doc = crate::off_main(move || {
+        with_store(&store, |s| s.create_in(&workspace, &title, kind, &text))
+    })
+    .await?;
     crate::rag::index_in_background(&app, vec![doc.id.clone()]);
     Ok(doc)
 }
@@ -89,6 +96,7 @@ pub async fn import_knowledge(
         return Ok(ImportReport::default());
     };
 
+    let workspace = crate::workspaces::active(&app)?.id;
     let mut report = ImportReport::default();
     for file in picked {
         let path = match file.into_path() {
@@ -105,8 +113,9 @@ pub async fn import_knowledge(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let result = read_document(&path, &name)
-            .and_then(|bytes| with_store(&knowledge.0, |s| s.import(&name, &bytes)));
+        let result = read_document(&path, &name).and_then(|bytes| {
+            with_store(&knowledge.0, |s| s.import_into(&workspace, &name, &bytes))
+        });
         match result {
             Ok(doc) => report.imported.push(doc),
             Err(reason) => report.skipped.push(SkippedFile { name, reason }),

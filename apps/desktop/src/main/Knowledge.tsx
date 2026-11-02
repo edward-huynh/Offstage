@@ -49,7 +49,7 @@ function formatDate(ms: number): string | null {
 }
 
 /** The user's own documents (JD, CV, rubric...). The AI reads them to ground its answers. */
-export function Knowledge() {
+export function Knowledge({ workspaceName }: { workspaceName?: string }) {
   const knowledge = useKnowledge();
   const embedding = useEmbeddingModel();
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -111,8 +111,15 @@ export function Knowledge() {
     <Screen>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
-          Tài liệu của bạn, như mô tả công việc, CV hay tiêu chí đánh giá. Thêm tệp .pdf, .docx,
-          .md, .txt (tối đa 20 MB mỗi tệp) hoặc tự gõ, dán nội dung vào.
+          {workspaceName ? (
+            <>
+              Tài liệu của workspace <strong className="font-medium text-foreground">{workspaceName}</strong>, như mô
+              tả công việc, CV hay tiêu chí đánh giá.
+            </>
+          ) : (
+            "Tài liệu của bạn, như mô tả công việc, CV hay tiêu chí đánh giá."
+          )}{" "}
+          Thêm tệp .pdf, .docx, .md, .txt (tối đa 20 MB mỗi tệp) hoặc tự gõ, dán nội dung vào.
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" size="sm" disabled={writing} onClick={openForm}>

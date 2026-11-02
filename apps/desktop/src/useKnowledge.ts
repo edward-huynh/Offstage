@@ -7,6 +7,7 @@ import {
   knowledgeIndexStatus,
   listKnowledge,
   onKnowledgeIndexed,
+  onWorkspaceChanged,
   type ImportReport,
   type IndexStatus,
   type KnowledgeDoc,
@@ -46,6 +47,20 @@ export function useKnowledge() {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // Another workspace has other documents.
+  useEffect(() => {
+    let cancelled = false;
+    let off: (() => void) | undefined;
+    void onWorkspaceChanged(() => void refresh()).then((unlisten) => {
+      if (cancelled) unlisten();
+      else off = unlisten;
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
   }, [refresh]);
 
   // Rust reads each document into the AI's index in the background and says when one is done.

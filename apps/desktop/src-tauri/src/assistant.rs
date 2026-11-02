@@ -11,13 +11,13 @@ use std::{
     time::Duration,
 };
 
-use offstage_core::{question::is_question, AppEvent, Speaker};
+use offstage_core::{question::is_question, workspaces::Workspace, AppEvent, Speaker};
 use offstage_embed::{onnx::E5Embedder, TextEmbedder};
 use offstage_llm::{
     config::{self, AssistantConfig},
     history::History,
     openai_compat::{endpoint_is_local, OpenAiCompat},
-    prompt::{build_messages_with_documents, Excerpt, Turn},
+    prompt::{build_messages_in_context, Excerpt, Turn},
     router::{ChatBackend, Policy, Router, Served},
     secrets, LlmError, LlmProvider,
 };
@@ -26,7 +26,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
 
-use crate::{embedding, listening::emit, local_llm, rag::Rag, storage};
+use crate::{embedding, listening::emit, local_llm, rag::Rag, storage, workspaces};
 
 pub(crate) const CONFIG_KEY: &str = "assistant_config";
 
@@ -60,9 +60,28 @@ struct State {
     history: History,
     /// The answer being written, so a new question can stop it.
     current: Option<CancellationToken>,
-    /// The provider for the saved choice. Building it reads the keychain, which can ask the
-    /// user, so it is kept until the choice or the key changes.
-    provider: Option<Arc<OpenAiCompat>>,
+    /// The provider for a choice. Building it reads the keychain, which can ask the user, so it
+    /// is kept until the choice or the key changes. Another workspace can choose another
+    /// provider, so the choice it was built for is kept with it.
+    provider: Option<(ProviderChoice, Arc<OpenAiCompat>)>,
+}
+
+/// What a provider was built from: the same choice gives the same provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderChoice {
+    provider_id: String,
+    model: Option<String>,
+    custom_base_url: Option<String>,
+}
+
+impl ProviderChoice {
+    fn of(config: &AssistantConfig) -> Self {
+        Self {
+            provider_id: config.provider_id.clone(),
+            model: config.model.clone(),
+            custom_base_url: config.custom_base_url.clone(),
+        }
+    }
 }
 
 fn load_config(app: &AppHandle) -> Result<AssistantConfig, String> {
@@ -75,12 +94,15 @@ fn with_state<T>(app: &AppHandle, f: impl FnOnce(&mut State) -> T) -> Option<T> 
     Some(f(&mut state))
 }
 
-/// The provider for the saved choice, with its key read from the keychain.
-fn provider(app: &AppHandle) -> Result<Arc<OpenAiCompat>, String> {
-    if let Some(Some(cached)) = with_state(app, |state| state.provider.clone()) {
-        return Ok(cached);
+/// The provider for `config`, with its key read from the keychain.
+fn provider(app: &AppHandle, config: &AssistantConfig) -> Result<Arc<OpenAiCompat>, String> {
+    let choice = ProviderChoice::of(config);
+    if let Some(Some((built_for, cached))) = with_state(app, |state| state.provider.clone()) {
+        if built_for == choice {
+            return Ok(cached);
+        }
     }
-    let mut chosen = load_config(app)?.provider().map_err(|e| e.to_string())?;
+    let mut chosen = config.provider().map_err(|e| e.to_string())?;
     let key = match chosen.key_ref.as_deref() {
         Some(key_ref) => secrets::resolve(key_ref).map_err(|e| e.to_string())?,
         None => None,
@@ -90,8 +112,31 @@ fn provider(app: &AppHandle) -> Result<Arc<OpenAiCompat>, String> {
         chosen.key_ref = None;
     }
     let built = Arc::new(OpenAiCompat::new(chosen, key).map_err(|e| e.to_string())?);
-    with_state(app, |state| state.provider = Some(Arc::clone(&built)));
+    with_state(app, |state| {
+        state.provider = Some((choice, Arc::clone(&built)));
+    });
     Ok(built)
+}
+
+/// The app-wide choice with what the workspace changes: a workspace can keep the call off the
+/// network, which the app-wide `local_only` cannot be turned off by, and can use its own provider
+/// and model.
+pub(crate) fn with_workspace(
+    mut config: AssistantConfig,
+    workspace: &Workspace,
+) -> AssistantConfig {
+    config.local_only |= workspace.local_only;
+    if let Some(provider_id) = &workspace.provider_id {
+        // A model belongs to the provider it was chosen for, so it is not carried over.
+        config.provider_id = provider_id.clone();
+        config.model = workspace.model.clone();
+    }
+    config
+}
+
+/// What the assistant does now: the saved choice, changed by the workspace in use.
+pub(crate) fn effective_config(app: &AppHandle) -> Result<AssistantConfig, String> {
+    Ok(with_workspace(load_config(app)?, &workspaces::active(app)?))
 }
 
 /// Whether the assistant is turned on, so the app knows to keep what it needs ready.
@@ -112,7 +157,7 @@ pub fn cancel_current(app: &AppHandle) {
             token.cancel();
         }
         state.history.clear();
-        if let Some(provider) = &state.provider {
+        if let Some((_, provider)) = &state.provider {
             provider.new_session();
         }
     });
@@ -141,8 +186,12 @@ pub fn on_event(app: &AppHandle, event: &AppEvent) {
 }
 
 fn answer(app: &AppHandle, question: String, language: Option<String>, history: Vec<Turn>) {
+    let workspace = match workspaces::active(app) {
+        Ok(workspace) => workspace,
+        Err(message) => return emit(app, &AppEvent::Error { message }),
+    };
     let config = match load_config(app) {
-        Ok(config) if config.enabled => config,
+        Ok(config) if config.enabled => with_workspace(config, &workspace),
         Ok(_) => return,
         Err(message) => return emit(app, &AppEvent::Error { message }),
     };
@@ -151,7 +200,7 @@ fn answer(app: &AppHandle, question: String, language: Option<String>, history: 
     let provider: Option<Arc<dyn ChatBackend>> = if config.local_only {
         None
     } else {
-        match provider(app) {
+        match provider(app, &config) {
             Ok(provider) => Some(provider),
             // A provider that cannot be built (no key yet) is not fatal when the model on this
             // machine can answer in its place.
@@ -205,7 +254,11 @@ fn answer(app: &AppHandle, question: String, language: Option<String>, history: 
         },
     );
 
-    let index = app.try_state::<Rag>().map(|rag| rag.0.clone());
+    // Only the documents of this workspace: another one's may belong to another call.
+    let index = app
+        .try_state::<Rag>()
+        .map(|rag| rag.0.in_workspace(&workspace.id));
+    let note = workspace.note.clone();
     let embedder = embedding::current(app);
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -214,8 +267,13 @@ fn answer(app: &AppHandle, question: String, language: Option<String>, history: 
         if cancel.is_cancelled() {
             return;
         }
-        let messages =
-            build_messages_with_documents(&question, &history, language.as_deref(), &excerpts);
+        let messages = build_messages_in_context(
+            &question,
+            &history,
+            language.as_deref(),
+            &excerpts,
+            Some(&note),
+        );
         let sources = sources_of(&excerpts);
         let mut on_token = {
             let app = app.clone();
@@ -444,7 +502,8 @@ pub fn assistant_set_config(
 #[tauri::command]
 pub async fn assistant_status(app: AppHandle) -> Result<AssistantStatus, String> {
     blocking(move || {
-        let config = load_config(&app)?;
+        // What will happen now, so the workspace in use counts.
+        let config = effective_config(&app)?;
         let has_key = match config::key_ref_for(&config.provider_id) {
             Some(reference) => secrets::exists(&reference).map_err(|e| e.to_string())?,
             None => false,
@@ -484,7 +543,7 @@ pub async fn assistant_clear_key(app: AppHandle, provider_id: String) -> Result<
 #[tauri::command]
 pub async fn assistant_test_connection(app: AppHandle) -> Result<(), String> {
     let handle = app.clone();
-    let provider = blocking(move || provider(&handle)).await?;
+    let provider = blocking(move || provider(&handle, &load_config(&handle)?)).await?;
     provider.test_connection().await.map_err(|e| e.to_string())
 }
 
@@ -492,7 +551,7 @@ pub async fn assistant_test_connection(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn assistant_list_models(app: AppHandle) -> Result<Vec<String>, String> {
     let handle = app.clone();
-    let provider = blocking(move || provider(&handle)).await?;
+    let provider = blocking(move || provider(&handle, &load_config(&handle)?)).await?;
     provider.list_models().await.map_err(|e| e.to_string())
 }
 
@@ -643,6 +702,65 @@ mod tests {
         assert!(!s.cloud);
         assert!(!s.needs_key);
         assert!(s.ready, "a local endpoint needs no key");
+    }
+
+    fn workspace(local_only: bool, provider: Option<&str>, model: Option<&str>) -> Workspace {
+        Workspace {
+            id: "w".into(),
+            name: "Phỏng vấn".into(),
+            note: String::new(),
+            local_only,
+            provider_id: provider.map(str::to_owned),
+            model: model.map(str::to_owned),
+            created_at: 1,
+        }
+    }
+
+    #[test]
+    fn a_plain_workspace_changes_nothing() {
+        let base = config("openai", Some("gpt-4o-mini"), true);
+        assert_eq!(
+            with_workspace(base.clone(), &workspace(false, None, None)),
+            base
+        );
+    }
+
+    #[test]
+    fn a_workspace_can_keep_the_call_off_the_network_but_never_lift_the_app_wide_choice() {
+        let cloud = config("openai", Some("gpt-4o-mini"), true);
+        let kept = with_workspace(cloud.clone(), &workspace(true, None, None));
+        assert!(kept.local_only);
+        // The workspace's own provider and model are untouched.
+        assert_eq!(kept.provider_id, cloud.provider_id);
+        // The app-wide local-only stays on, whatever the workspace says.
+        let app_wide = AssistantConfig {
+            local_only: true,
+            ..cloud
+        };
+        assert!(with_workspace(app_wide, &workspace(false, None, None)).local_only);
+    }
+
+    #[test]
+    fn a_workspace_can_use_its_own_provider_and_model() {
+        let base = config("openai", Some("gpt-4o-mini"), true);
+        let own = with_workspace(
+            base.clone(),
+            &workspace(false, Some("opencode-go"), Some("kimi-k2.6")),
+        );
+        assert_eq!(own.provider_id, "opencode-go");
+        assert_eq!(own.model.as_deref(), Some("kimi-k2.6"));
+        // A provider without a model does not borrow the app-wide model: it belongs to another provider.
+        let no_model = with_workspace(base, &workspace(false, Some("opencode-go"), None));
+        assert_eq!(no_model.model, None);
+    }
+
+    #[test]
+    fn the_status_follows_the_workspace_in_use() {
+        let base = config("openai", Some("gpt-4o-mini"), true);
+        assert!(status_of(&base, true, true).cloud);
+        let local = with_workspace(base, &workspace(true, None, None));
+        let s = status_of(&local, true, true);
+        assert!(s.local_only && !s.cloud && s.ready);
     }
 
     #[test]

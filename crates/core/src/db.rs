@@ -83,6 +83,22 @@ const MIGRATIONS: &[&str] = &[
          model    TEXT NOT NULL,
          vec      BLOB NOT NULL
      );",
+    // 4: workspaces. Each holds its own documents, a note for the model, and may keep the call off
+    // the network or use another provider than the one chosen for the whole app. There is always
+    // one, `default`, which takes the documents that existed before workspaces did. SQLite cannot
+    // add a foreign key to an existing table, so a document's workspace is checked in code.
+    "CREATE TABLE workspaces (
+         id          TEXT PRIMARY KEY NOT NULL,
+         name        TEXT NOT NULL,
+         note        TEXT NOT NULL DEFAULT '',
+         local_only  INTEGER NOT NULL DEFAULT 0,
+         provider_id TEXT,
+         model       TEXT,
+         created_at  INTEGER NOT NULL
+     );
+     INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Mặc định', 0);
+     ALTER TABLE knowledge ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default';
+     CREATE INDEX knowledge_workspace ON knowledge (workspace_id, added_at);",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -263,7 +279,7 @@ mod tests {
             Db::open(dir.path()),
             Err(DbError::TooNew {
                 found: 99,
-                supported: 3
+                supported: 4
             })
         ));
     }

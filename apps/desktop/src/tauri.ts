@@ -339,6 +339,104 @@ export async function onPlayStopped(handler: () => void): Promise<() => void> {
   return listen("play_stopped", () => handler());
 }
 
+/** A set of documents with a note for the model and the choices that go with one situation. */
+export type Workspace = {
+  id: string;
+  name: string;
+  /** What the user wants the model to know about this situation. */
+  note: string;
+  /** Nothing said in a call using this workspace may leave the machine. */
+  local_only: boolean;
+  /** Answer with this provider instead of the app-wide one, or `null`. */
+  provider_id: string | null;
+  /** The model of that provider, or `null`. */
+  model: string | null;
+  /** Unix time in milliseconds. */
+  created_at: number;
+};
+
+/** Everything that can be changed about a workspace. Each field replaces the stored one. */
+export type WorkspaceUpdate = Pick<Workspace, "name" | "note" | "local_only" | "provider_id" | "model">;
+
+// Without Tauri there is no storage, so workspaces live in memory for styling work.
+let browserWorkspaces: Workspace[] = [
+  { id: "default", name: "Mặc định", note: "", local_only: false, provider_id: null, model: null, created_at: 0 },
+];
+let browserActiveWorkspace = "default";
+const workspaceListeners = new Set<() => void>();
+const notifyWorkspaces = () => workspaceListeners.forEach((fn) => fn());
+
+/** Every workspace, oldest first. */
+export async function listWorkspaces(): Promise<Workspace[]> {
+  if (!inTauri()) return browserWorkspaces;
+  return invoke<Workspace[]>("list_workspaces");
+}
+
+/** The workspace in use. */
+export async function activeWorkspace(): Promise<Workspace> {
+  if (!inTauri()) return browserWorkspaces.find((w) => w.id === browserActiveWorkspace) ?? browserWorkspaces[0];
+  return invoke<Workspace>("active_workspace");
+}
+
+export async function setActiveWorkspace(id: string): Promise<Workspace> {
+  if (!inTauri()) {
+    browserActiveWorkspace = id;
+    notifyWorkspaces();
+    return activeWorkspace();
+  }
+  return invoke<Workspace>("set_active_workspace", { id });
+}
+
+export async function createWorkspace(name: string): Promise<Workspace> {
+  if (!inTauri()) {
+    if (name.trim() === "") throw new Error("Tên workspace không được để trống");
+    const workspace: Workspace = {
+      id: `w${Date.now()}`,
+      name: name.trim(),
+      note: "",
+      local_only: false,
+      provider_id: null,
+      model: null,
+      created_at: Date.now(),
+    };
+    browserWorkspaces = [...browserWorkspaces, workspace];
+    notifyWorkspaces();
+    return workspace;
+  }
+  return invoke<Workspace>("create_workspace", { name });
+}
+
+export async function updateWorkspace(id: string, update: WorkspaceUpdate): Promise<Workspace> {
+  if (!inTauri()) {
+    if (update.name.trim() === "") throw new Error("Tên workspace không được để trống");
+    browserWorkspaces = browserWorkspaces.map((w) => (w.id === id ? { ...w, ...update } : w));
+    notifyWorkspaces();
+    return browserWorkspaces.find((w) => w.id === id) ?? browserWorkspaces[0];
+  }
+  return invoke<Workspace>("update_workspace", { id, update });
+}
+
+/** Deletes the workspace and its documents. Rejects when it is the last one. */
+export async function deleteWorkspace(id: string): Promise<void> {
+  if (!inTauri()) {
+    if (browserWorkspaces.length <= 1) throw new Error("Phải còn ít nhất một workspace");
+    browserWorkspaces = browserWorkspaces.filter((w) => w.id !== id);
+    if (browserActiveWorkspace === id) browserActiveWorkspace = browserWorkspaces[0].id;
+    notifyWorkspaces();
+    return;
+  }
+  await invoke("delete_workspace", { id });
+}
+
+/** Called after a workspace was created, changed, deleted or put in use. */
+export async function onWorkspaceChanged(handler: () => void): Promise<() => void> {
+  if (!inTauri()) {
+    workspaceListeners.add(handler);
+    return () => void workspaceListeners.delete(handler);
+  }
+  return listen("workspace_changed", () => handler());
+}
+
 export type KnowledgeKind = "pdf" | "docx" | "markdown" | "text";
 
 export type KnowledgeDoc = {

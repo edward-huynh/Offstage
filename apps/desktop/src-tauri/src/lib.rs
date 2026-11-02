@@ -30,6 +30,7 @@ mod play;
 mod rag;
 mod settings;
 mod storage;
+mod workspaces;
 
 pub(crate) const OVERLAY: &str = "overlay";
 const CONFIG_KEY: &str = "overlay_config";
@@ -460,6 +461,7 @@ pub fn run() {
                 Err(e) => eprintln!("old scripts not imported: {e}"),
             }
             app.manage(Scripts(Arc::new(Mutex::new(script_store))));
+            app.manage(offstage_core::workspaces::WorkspaceStore::new(db.clone()));
             app.manage(rag::Rag(offstage_rag::ChunkStore::new(db.clone())));
             app.manage(knowledge::Knowledge(Arc::new(Mutex::new(
                 KnowledgeStore::new(db, data_dir.join("knowledge")),
@@ -569,6 +571,12 @@ pub fn run() {
             knowledge::create_knowledge,
             knowledge::delete_knowledge,
             rag::knowledge_index_status,
+            workspaces::list_workspaces,
+            workspaces::active_workspace,
+            workspaces::set_active_workspace,
+            workspaces::create_workspace,
+            workspaces::update_workspace,
+            workspaces::delete_workspace,
             embedding::embedding_model_info,
             embedding::download_embedding_model,
             embedding::cancel_embedding_download,

@@ -38,6 +38,8 @@ pub struct IndexStatus {
 #[derive(Clone)]
 pub struct ChunkStore {
     pub(crate) db: Db,
+    /// When set, searching only sees the documents of this workspace.
+    pub(crate) workspace: Option<String>,
 }
 
 fn now_ms() -> i64 {
@@ -47,8 +49,21 @@ fn now_ms() -> i64 {
 }
 
 impl ChunkStore {
+    /// A store that sees every document, which is what indexing needs.
     pub fn new(db: Db) -> Self {
-        Self { db }
+        Self {
+            db,
+            workspace: None,
+        }
+    }
+
+    /// The same store, for searching only the documents of `workspace`: what one workspace's
+    /// call may use must not include another's. Indexing is not affected.
+    pub fn in_workspace(&self, workspace: &str) -> Self {
+        Self {
+            db: self.db.clone(),
+            workspace: Some(workspace.to_owned()),
+        }
     }
 
     /// Replaces the chunks of a document with `chunks`, and marks it as indexed. Returns how
@@ -133,11 +148,20 @@ impl ChunkStore {
     /// every chunk of a document about it holds ("next js").
     fn statistics(&self, terms: &[String], pairs: &HashSet<query::Pair>) -> Result<Statistics> {
         let conn = self.db.lock()?;
-        let total: i64 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
+        let workspace = self.workspace.as_deref();
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM chunks c JOIN knowledge k ON k.id = c.doc_id
+             WHERE (?1 IS NULL OR k.workspace_id = ?1)",
+            [workspace],
+            |row| row.get(0),
+        )?;
         let holding = |phrase: String| -> Result<i64> {
             Ok(conn.query_row(
-                "SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH ?1",
-                [phrase],
+                "SELECT COUNT(*) FROM chunks_fts
+                 JOIN chunks c ON c.id = chunks_fts.rowid
+                 JOIN knowledge k ON k.id = c.doc_id
+                 WHERE chunks_fts MATCH ?1 AND (?2 IS NULL OR k.workspace_id = ?2)",
+                params![phrase, workspace],
                 |row| row.get(0),
             )?)
         };
@@ -169,8 +193,10 @@ impl ChunkStore {
     pub fn everything_if_small(&self, max_chars: usize) -> Result<Option<Vec<SearchHit>>> {
         let conn = self.db.lock()?;
         let total: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM chunks",
-            [],
+            "SELECT COALESCE(SUM(LENGTH(c.content)), 0)
+             FROM chunks c JOIN knowledge k ON k.id = c.doc_id
+             WHERE (?1 IS NULL OR k.workspace_id = ?1)",
+            [self.workspace.as_deref()],
             |row| row.get(0),
         )?;
         if total == 0 || usize::try_from(total).map_or(true, |total| total > max_chars) {
@@ -179,9 +205,10 @@ impl ChunkStore {
         let mut stmt = conn.prepare(
             "SELECT k.name, c.section, c.content
              FROM chunks c JOIN knowledge k ON k.id = c.doc_id
+             WHERE (?1 IS NULL OR k.workspace_id = ?1)
              ORDER BY k.added_at, k.id, c.ord",
         )?;
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map([self.workspace.as_deref()], |row| {
             Ok(SearchHit {
                 chunk: Chunk {
                     doc: row.get(0)?,
@@ -275,20 +302,21 @@ impl ChunkStore {
                  FROM chunks_fts
                  JOIN chunks c ON c.id = chunks_fts.rowid
                  JOIN knowledge k ON k.id = c.doc_id
-                 WHERE chunks_fts MATCH ?1
+                 WHERE chunks_fts MATCH ?1 AND (?3 IS NULL OR k.workspace_id = ?3)
                  ORDER BY bm25(chunks_fts, 1.0, 2.0)
                  LIMIT ?2",
             )?;
-            let rows = stmt.query_map(params![fts, CANDIDATES], |row| {
-                Ok((
-                    row.get(0)?,
-                    Chunk {
-                        doc: row.get(1)?,
-                        section: row.get(2)?,
-                        content: row.get(3)?,
-                    },
-                ))
-            })?;
+            let rows =
+                stmt.query_map(params![fts, CANDIDATES, self.workspace.as_deref()], |row| {
+                    Ok((
+                        row.get(0)?,
+                        Chunk {
+                            doc: row.get(1)?,
+                            section: row.get(2)?,
+                            content: row.get(3)?,
+                        },
+                    ))
+                })?;
             rows.collect::<std::result::Result<_, _>>()?
         };
 
@@ -618,6 +646,110 @@ mod tests {
         s.replace("d1", &[chunk("a.txt", None, "ệệệệệệệệệệ")])
             .unwrap();
         assert!(s.everything_if_small(10).unwrap().is_some());
+    }
+
+    /// Two documents with the same words in two workspaces.
+    fn two_workspaces() -> ChunkStore {
+        let s = store_with(&[("d1", "CV-A.md"), ("d2", "CV-B.md")]);
+        s.db.lock()
+            .unwrap()
+            .execute(
+                "UPDATE knowledge SET workspace_id = 'w2' WHERE id = 'd2'",
+                [],
+            )
+            .unwrap();
+        s.replace(
+            "d1",
+            &[chunk("CV-A.md", None, "Kinh nghiệm viết Rust cho desktop")],
+        )
+        .unwrap();
+        s.replace(
+            "d2",
+            &[chunk("CV-B.md", None, "Kinh nghiệm viết Rust cho máy chủ")],
+        )
+        .unwrap();
+        s
+    }
+
+    #[test]
+    fn searching_inside_a_workspace_never_sees_another_ones_documents() {
+        let s = two_workspaces();
+        // Without a scope, both are found.
+        assert_eq!(s.search("kinh nghiệm Rust", 4, 4000).unwrap().len(), 2);
+        let a = s
+            .in_workspace("default")
+            .search("kinh nghiệm Rust", 4, 4000)
+            .unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].chunk.doc, "CV-A.md");
+        let b = s
+            .in_workspace("w2")
+            .search("kinh nghiệm Rust", 4, 4000)
+            .unwrap();
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].chunk.doc, "CV-B.md");
+        assert!(s
+            .in_workspace("empty")
+            .search("kinh nghiệm Rust", 4, 4000)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn taking_everything_is_limited_to_the_workspace_and_so_is_its_size() {
+        let s = two_workspaces();
+        let a = s
+            .in_workspace("default")
+            .everything_if_small(10_000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].chunk.doc, "CV-A.md");
+        // The size of one workspace's documents decides, not the size of all of them.
+        let one = "Kinh nghiệm viết Rust cho desktop".chars().count();
+        assert!(s
+            .in_workspace("default")
+            .everything_if_small(one)
+            .unwrap()
+            .is_some());
+        assert!(s.everything_if_small(one).unwrap().is_none());
+        assert!(s
+            .in_workspace("empty")
+            .everything_if_small(10_000)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn a_name_counts_as_rare_by_its_own_workspace_not_by_every_workspace() {
+        let s = store_with(&[("d1", "a.md"), ("d2", "b.md")]);
+        s.db.lock()
+            .unwrap()
+            .execute(
+                "UPDATE knowledge SET workspace_id = 'w2' WHERE id = 'd2'",
+                [],
+            )
+            .unwrap();
+        // "Tauri" is in 1 of 2 chunks of the first workspace, and in the second workspace's
+        // 20 chunks it is in none. Rare only makes sense among the workspace's own chunks.
+        s.replace(
+            "d1",
+            &[
+                chunk("a.md", None, "Biết Tauri"),
+                chunk("a.md", None, "Biết Redis"),
+            ],
+        )
+        .unwrap();
+        let filler: Vec<_> = (0..20)
+            .map(|i| chunk("b.md", None, &format!("Mục khác số {i}")))
+            .collect();
+        s.replace("d2", &filler).unwrap();
+        let hits = s
+            .in_workspace("default")
+            .search("Bạn có kinh nghiệm làm việc với Tauri không?", 4, 4000)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].chunk.content, "Biết Tauri");
     }
 
     #[test]

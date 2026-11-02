@@ -23,6 +23,9 @@ use crate::db::{Db, DbError};
 /// Largest file accepted, in bytes.
 pub const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 
+/// The workspace documents go to when the caller does not name one.
+pub use crate::workspaces::DEFAULT_WORKSPACE;
+
 const DEFAULT_NAME: &str = "Tài liệu";
 const MAX_NAME_CHARS: usize = 120;
 
@@ -182,7 +185,7 @@ impl KnowledgeStore {
             .ok_or_else(|| KnowledgeError::NotFound(id.to_owned()))
     }
 
-    /// All documents, most recently added first.
+    /// All documents of every workspace, most recently added first.
     pub fn list(&self) -> Result<Vec<KnowledgeDoc>> {
         let conn = self.db.lock()?;
         // `rowid` breaks ties so the newest of two documents added in the same millisecond is first.
@@ -194,9 +197,31 @@ impl KnowledgeStore {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Copies a file into the store. `file_name` may carry folders (it is whatever the
-    /// caller got from the system), only its last part is used.
+    /// The documents of one workspace, most recently added first.
+    pub fn list_in(&self, workspace: &str) -> Result<Vec<KnowledgeDoc>> {
+        let conn = self.db.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, kind, size_bytes, added_at FROM knowledge
+             WHERE workspace_id = ?1
+             ORDER BY added_at DESC, rowid DESC",
+        )?;
+        let rows = stmt.query_map([workspace], doc_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Copies a file into the default workspace. See [`KnowledgeStore::import_into`].
     pub fn import(&self, file_name: &str, bytes: &[u8]) -> Result<KnowledgeDoc> {
+        self.import_into(DEFAULT_WORKSPACE, file_name, bytes)
+    }
+
+    /// Copies a file into the store, as a document of `workspace`. `file_name` may carry folders
+    /// (it is whatever the caller got from the system), only its last part is used.
+    pub fn import_into(
+        &self,
+        workspace: &str,
+        file_name: &str,
+        bytes: &[u8],
+    ) -> Result<KnowledgeDoc> {
         let kind =
             KnowledgeKind::from_file_name(file_name).ok_or(KnowledgeError::UnsupportedType)?;
         let size_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
@@ -234,14 +259,15 @@ impl KnowledgeStore {
         let path = self.file_path(&doc);
         write_atomic(&path, bytes)?;
         let inserted = conn.execute(
-            "INSERT INTO knowledge (id, name, kind, size_bytes, added_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO knowledge (id, name, kind, size_bytes, added_at, workspace_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 doc.id,
                 doc.name,
                 doc.kind.db_name(),
                 i64::try_from(doc.size_bytes).unwrap_or(i64::MAX),
                 i64::try_from(doc.added_at).unwrap_or(i64::MAX),
+                workspace,
             ],
         );
         if let Err(e) = inserted {
@@ -257,6 +283,17 @@ impl KnowledgeStore {
     /// `kind` is added, and folder separators in the title are replaced so they cannot be
     /// read as a path. The stored copy is exactly `text`.
     pub fn create(&self, title: &str, kind: KnowledgeKind, text: &str) -> Result<KnowledgeDoc> {
+        self.create_in(DEFAULT_WORKSPACE, title, kind, text)
+    }
+
+    /// Like [`KnowledgeStore::create`], as a document of `workspace`.
+    pub fn create_in(
+        &self,
+        workspace: &str,
+        title: &str,
+        kind: KnowledgeKind,
+        text: &str,
+    ) -> Result<KnowledgeDoc> {
         if !matches!(kind, KnowledgeKind::Markdown | KnowledgeKind::Text) {
             return Err(KnowledgeError::NotTextKind);
         }
@@ -277,7 +314,7 @@ impl KnowledgeStore {
         } else {
             title
         };
-        self.import(&format!("{title}.{ext}"), text.as_bytes())
+        self.import_into(workspace, &format!("{title}.{ext}"), text.as_bytes())
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
@@ -561,6 +598,40 @@ mod tests {
         let listed = s.list().unwrap();
         assert_eq!(listed.len(), 2);
         assert_eq!(listed[0].id, b.id);
+    }
+
+    #[test]
+    fn documents_belong_to_their_workspace_and_listing_keeps_them_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        let mine = s.import("cv.md", b"cv").unwrap();
+        let other = s.import_into("w1", "jd.md", b"jd").unwrap();
+        let typed = s
+            .create_in("w1", "Ghi chú", KnowledgeKind::Text, "ghi chú")
+            .unwrap();
+        // Without a workspace, a document goes to the default one.
+        assert_eq!(s.list_in(DEFAULT_WORKSPACE).unwrap(), vec![mine.clone()]);
+        assert_eq!(s.list_in("w1").unwrap(), vec![typed, other.clone()]);
+        assert!(s.list_in("none").unwrap().is_empty());
+        // `list` still shows every document, for the code that indexes them all.
+        assert_eq!(s.list().unwrap().len(), 3);
+        assert!(s.list().unwrap().contains(&other));
+    }
+
+    #[test]
+    fn a_document_row_from_before_workspaces_is_in_the_default_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+        // The INSERT of version 1 of the schema: no `workspace_id`.
+        s.db.lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO knowledge (id, name, kind, size_bytes, added_at)
+                 VALUES ('old', 'cv.md', 'markdown', 1, 1)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(s.list_in(DEFAULT_WORKSPACE).unwrap().len(), 1);
     }
 
     #[test]

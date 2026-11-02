@@ -124,6 +124,31 @@ pub fn build_messages_with_documents(
     language: Option<&str>,
     excerpts: &[Excerpt],
 ) -> Vec<ChatMessage> {
+    build_messages_in_context(question, recent, language, excerpts, None)
+}
+
+/// Longest note sent, in characters. The workspace allows a little more: the model should not
+/// spend its time on a long note.
+const MAX_NOTE_CHARS: usize = 1_500;
+
+/// The rule that goes with a note: it explains the situation, it is not a source of facts.
+const NOTE_RULE: &str =
+    "\n- Phần BỐI CẢNH là ghi chú của người dùng về cuộc gọi này. Dùng nó để hiểu \
+tình huống (vị trí, công ty, người nghe). Đừng coi nó là nguồn của câu trả lời.";
+
+/// Like [`build_messages_with_documents`], with the note the user wrote for the workspace: what
+/// the call is about, which the documents do not say. A blank note is no note.
+pub fn build_messages_in_context(
+    question: &str,
+    recent: &[Turn],
+    language: Option<&str>,
+    excerpts: &[Excerpt],
+    note: Option<&str>,
+) -> Vec<ChatMessage> {
+    let note = note
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(|n| n.chars().take(MAX_NOTE_CHARS).collect::<String>());
     let question = question.trim();
     let before: Vec<&Turn> = match recent.split_last() {
         Some((last, rest)) if !last.from_me && last.text.trim() == question => {
@@ -134,6 +159,11 @@ pub fn build_messages_with_documents(
     let context = context_block(&before);
 
     let mut user = String::new();
+    if let Some(note) = &note {
+        user.push_str("BỐI CẢNH (ghi chú của người dùng):\n");
+        user.push_str(note);
+        user.push_str("\n\n");
+    }
     if !excerpts.is_empty() {
         user.push_str("TÀI LIỆU:\n");
         for (n, excerpt) in excerpts.iter().enumerate() {
@@ -163,12 +193,18 @@ pub fn build_messages_with_documents(
     vec![
         ChatMessage {
             role: Role::System,
-            content: if excerpts.is_empty() {
-                SYSTEM_PROMPT
-            } else {
-                GROUNDED_SYSTEM_PROMPT
-            }
-            .to_owned(),
+            content: {
+                let mut system = if excerpts.is_empty() {
+                    SYSTEM_PROMPT
+                } else {
+                    GROUNDED_SYSTEM_PROMPT
+                }
+                .to_owned();
+                if note.is_some() {
+                    system.push_str(NOTE_RULE);
+                }
+                system
+            },
         },
         ChatMessage {
             role: Role::User,
@@ -375,6 +411,43 @@ mod tests {
         assert!(without[1].content.ends_with("Answer in English."));
         let vi = build_messages_with_documents("Bạn học ở đâu?", &[], Some("vi"), &excerpts);
         assert!(vi[1].content.ends_with("Trả lời bằng tiếng Việt."));
+    }
+
+    #[test]
+    fn a_note_goes_first_in_the_user_message_with_a_rule_that_it_is_not_a_source() {
+        let excerpts = [excerpt("cv.md", None, "Ba năm Rust.")];
+        let messages = build_messages_in_context(
+            "Bạn biết Rust không?",
+            &[],
+            None,
+            &excerpts,
+            Some("  Phỏng vấn backend ở công ty ABC.  "),
+        );
+        assert!(messages[1].content.starts_with(
+            "BỐI CẢNH (ghi chú của người dùng):\nPhỏng vấn backend ở công ty ABC.\n\nTÀI LIỆU:"
+        ));
+        assert!(messages[0].content.contains("BỐI CẢNH"));
+        assert!(messages[0].content.contains("Đừng coi nó là nguồn"));
+        // Also without documents.
+        let plain =
+            build_messages_in_context("Rust là gì?", &[], None, &[], Some("Cuộc gọi bán hàng"));
+        assert!(plain[1]
+            .content
+            .starts_with("BỐI CẢNH (ghi chú của người dùng):\nCuộc gọi bán hàng"));
+        assert!(plain[0].content.contains("BỐI CẢNH"));
+    }
+
+    #[test]
+    fn a_blank_note_changes_nothing_and_a_long_one_is_cut() {
+        let plain = build_messages("Rust là gì?", &[], None);
+        for note in [None, Some(""), Some("  \n ")] {
+            let with = build_messages_in_context("Rust là gì?", &[], None, &[], note);
+            assert_eq!(with[0].content, plain[0].content);
+            assert_eq!(with[1].content, plain[1].content);
+        }
+        let long = "ạ".repeat(MAX_NOTE_CHARS * 2);
+        let cut = build_messages_in_context("Rust là gì?", &[], None, &[], Some(&long));
+        assert_eq!(cut[1].content.matches('ạ').count(), MAX_NOTE_CHARS);
     }
 
     #[test]

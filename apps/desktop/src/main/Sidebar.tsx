@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import {
   BookOpen,
+  Briefcase,
   FileText,
   Files,
   Home,
@@ -14,12 +15,14 @@ import {
 import { Button } from "@/components/motion/button";
 import { cn } from "@/lib/utils";
 import type { Library } from "../useLibrary";
+import type { Workspaces } from "../useWorkspaces";
 import type { Screen } from "./MainApp";
 
 type Props = {
   screen: Screen;
   onNavigate: (screen: Screen) => void;
   library: Library;
+  workspaces: Workspaces;
   collapsed: boolean;
   onToggle: () => void;
   onSearch: () => void;
@@ -29,6 +32,7 @@ const NAV: Array<{ screen: Screen; label: string; icon: LucideIcon }> = [
   { screen: "home", label: "Home", icon: Home },
   { screen: "content", label: "Content", icon: Files },
   { screen: "knowledge", label: "Knowledge", icon: BookOpen },
+  { screen: "workspaces", label: "Workspace", icon: Briefcase },
 ];
 
 const ACTIVE_SPRING = { type: "spring", stiffness: 520, damping: 42 } as const;
@@ -76,7 +80,7 @@ function FloatingSidebar(props: Props) {
   );
 }
 
-function SidebarPanel({ screen, onNavigate, library, onToggle, onSearch, floating }: Props & {
+function SidebarPanel({ screen, onNavigate, library, workspaces, onToggle, onSearch, floating }: Props & {
   floating?: boolean;
 }) {
   const create = async () => {
@@ -120,6 +124,25 @@ function SidebarPanel({ screen, onNavigate, library, onToggle, onSearch, floatin
         <Plus className="size-4 shrink-0" />
         <span>Content mới</span>
       </button>
+
+      {workspaces.workspaces.length > 1 && workspaces.active && (
+        <label className="mb-1 flex h-9 w-full shrink-0 items-center gap-2.5 rounded-lg px-3 text-[13px] text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground">
+          <Briefcase className="size-4 shrink-0" aria-hidden />
+          <select
+            aria-label="Workspace đang dùng"
+            title="Workspace đang dùng"
+            value={workspaces.active.id}
+            onChange={(e) => void workspaces.select(e.target.value)}
+            className="min-w-0 flex-1 cursor-pointer truncate bg-transparent font-medium text-foreground outline-none"
+          >
+            {workspaces.workspaces.map((w) => (
+              <option key={w.id} value={w.id} className="bg-[#0e131a]">
+                {w.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <ul className="flex flex-col gap-0.5">
         {NAV.map((item) => {

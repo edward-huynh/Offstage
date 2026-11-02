@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLibrary } from "../useLibrary";
 import { useSidebarCollapsed } from "../useSidebarCollapsed";
+import { useWorkspaces } from "../useWorkspaces";
 import { cn } from "@/lib/utils";
 import { Content } from "./Content";
 import { Home } from "./Home";
@@ -8,13 +9,15 @@ import { Knowledge } from "./Knowledge";
 import { SearchDialog } from "./SearchDialog";
 import { Settings } from "./Settings";
 import { Sidebar } from "./Sidebar";
+import { Workspaces } from "./Workspaces";
 
-export type Screen = "home" | "content" | "knowledge" | "settings";
+export type Screen = "home" | "content" | "knowledge" | "workspaces" | "settings";
 
 const TITLES: Record<Screen, string> = {
   home: "Home",
   content: "Content",
   knowledge: "Knowledge",
+  workspaces: "Workspace",
   settings: "Settings",
 };
 
@@ -23,6 +26,7 @@ export function MainApp() {
   const [screen, setScreen] = useState<Screen>("home");
   const [collapsed, toggleSidebar] = useSidebarCollapsed();
   const library = useLibrary();
+  const workspaces = useWorkspaces();
   const [searchOpen, setSearchOpen] = useState(false);
 
   const openTitle =
@@ -39,6 +43,7 @@ export function MainApp() {
         screen={screen}
         onNavigate={setScreen}
         library={library}
+        workspaces={workspaces}
         collapsed={collapsed}
         onToggle={toggleSidebar}
         onSearch={() => setSearchOpen(true)}
@@ -69,7 +74,8 @@ export function MainApp() {
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {screen === "home" && <Home onNavigate={setScreen} />}
           {screen === "content" && <Content library={library} />}
-          {screen === "knowledge" && <Knowledge />}
+          {screen === "knowledge" && <Knowledge workspaceName={workspaces.active?.name} />}
+          {screen === "workspaces" && <Workspaces state={workspaces} />}
           {screen === "settings" && <Settings />}
         </main>
       </div>

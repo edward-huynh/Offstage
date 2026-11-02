@@ -6,6 +6,7 @@ pub mod play;
 pub mod question;
 pub mod scripts;
 pub mod settings;
+pub mod workspaces;
 
 use serde::{Deserialize, Serialize};
 
@@ -145,18 +146,6 @@ fn clamp_axis(pos: i32, len: u32, origin: i32, span: u32) -> i32 {
     let hi = lo + i64::from(span) - i64::from(len);
     // `hi >= lo` because the caller already limited `len` to `span`, so the result fits in i32.
     i64::from(pos).clamp(lo, hi) as i32
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Workspace {
-    pub id: String,
-    pub name: String,
-    /// Free-form context the user writes for this session.
-    pub context_note: String,
-    /// Provider id used to answer; `None` means local model.
-    pub provider_id: Option<String>,
-    /// When true, nothing from this workspace may be sent to a cloud provider.
-    pub local_only: bool,
 }
 
 /// How well the overlay is hidden from screen sharing on this system.

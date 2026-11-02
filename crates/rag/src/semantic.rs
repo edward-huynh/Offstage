@@ -135,8 +135,13 @@ impl ChunkStore {
     /// question, most similar first. Mostly for measuring: search uses [`ChunkStore::search_with`].
     pub fn similarities(&self, query: &SemanticQuery<'_>) -> Result<Vec<(i64, f32)>> {
         let conn = self.db.lock()?;
-        let mut stmt = conn.prepare("SELECT chunk_id, vec FROM chunk_vectors WHERE model = ?1")?;
-        let rows = stmt.query_map([query.model], |row| {
+        let mut stmt = conn.prepare(
+            "SELECT v.chunk_id, v.vec FROM chunk_vectors v
+             JOIN chunks c ON c.id = v.chunk_id
+             JOIN knowledge k ON k.id = c.doc_id
+             WHERE v.model = ?1 AND (?2 IS NULL OR k.workspace_id = ?2)",
+        )?;
+        let rows = stmt.query_map(params![query.model, self.workspace.as_deref()], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
         })?;
         let mut scored = Vec::new();
@@ -409,6 +414,45 @@ mod tests {
             hits.iter().any(|h| h.chunk.content == "Viết rust"),
             "{hits:?}"
         );
+    }
+
+    #[test]
+    fn searching_by_meaning_inside_a_workspace_never_sees_another_ones_documents() {
+        let s = setup(&["Viết rust cho desktop"]);
+        s.db.lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO knowledge (id, name, kind, size_bytes, added_at, workspace_id)
+                 VALUES ('d2', 'JD.md', 'markdown', 1, 2, 'w2')",
+                [],
+            )
+            .unwrap();
+        s.replace(
+            "d2",
+            &[Chunk {
+                doc: "JD.md".into(),
+                section: None,
+                content: "Cần rust cho máy chủ".into(),
+            }],
+        )
+        .unwrap();
+        s.embed_pending(&Fake, "fake", |_| {}).unwrap();
+        let q = Fake.embed_query("rust").unwrap();
+        let semantic = SemanticQuery {
+            model: "fake",
+            vector: &q,
+        };
+        let docs = |scope: &ChunkStore| -> Vec<String> {
+            scope
+                .search_with("zzz", Some(&semantic), 4, 4000)
+                .unwrap()
+                .into_iter()
+                .map(|h| h.chunk.doc)
+                .collect()
+        };
+        assert_eq!(docs(&s).len(), 2);
+        assert_eq!(docs(&s.in_workspace("default")), ["CV.md"]);
+        assert_eq!(docs(&s.in_workspace("w2")), ["JD.md"]);
     }
 
     #[test]
