@@ -2,6 +2,9 @@
 // Tauri looks for an external binary: `apps/desktop/src-tauri/binaries/<name>-<target triple>`.
 // Tauri then bundles it next to the app's own executable, which is where the app expects it
 // (`apps/desktop/src-tauri/src/local_llm.rs`). Run by `npm run build`.
+//
+// `OFFSTAGE_LLM_FEATURES` adds Cargo features to the sidecar, for example `vulkan` to run the
+// model on a Vulkan GPU on Windows (see docs/RELEASE.md).
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync } from "node:fs";
@@ -18,7 +21,9 @@ const triple = execFileSync("rustc", ["-vV"], { encoding: "utf8" })
   .trim();
 if (!triple) throw new Error("cannot read the target triple from `rustc -vV`");
 
-execFileSync("cargo", ["build", "--release", "-p", "offstage-llm-host"], { cwd: root, stdio: "inherit" });
+const features = (process.env.OFFSTAGE_LLM_FEATURES ?? "").trim();
+const args = ["build", "--release", "-p", "offstage-llm-host", ...(features ? ["--features", features] : [])];
+execFileSync("cargo", args, { cwd: root, stdio: "inherit" });
 
 const targetDir = join(root, "apps", "desktop", "src-tauri", "binaries");
 mkdirSync(targetDir, { recursive: true });

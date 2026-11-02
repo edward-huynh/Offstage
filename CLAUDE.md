@@ -17,7 +17,7 @@ Open source (MIT), general purpose. Use cases we promote: presentations, intervi
 | Principle | Concretely |
 |---|---|
 | Local-first | Works fully offline by default. Cloud is opt-in per workspace and visibly indicated in the overlay. |
-| Lightweight | App binary about 50 MB (it was under 20 MB until ONNX Runtime was linked in for embeddings, see section 8 and the decision log), idle RAM under 150 MB. Models are downloaded on first run, never bundled. |
+| Lightweight | App binary about 40 MB (it was under 20 MB until ONNX Runtime was linked in for embeddings, see section 8 and the decision log), idle RAM under 150 MB. Models are downloaded on first run, never bundled. |
 | Automated | Auto-pick models by hardware, auto-index documents, auto-fallback between providers. Avoid manual steps for the user. |
 | Extensible by config | New providers and workspace templates are config/presets, not new code paths. |
 | Private | No audio written to disk. API keys only in the OS keychain. API calls only from Rust, never from the webview. |
@@ -147,7 +147,7 @@ Done:
 
 Verified: `npm run check` and CI (macOS and Windows, bundles uploaded; whisper builds on both, run on 219f5b5); the overlay opens on macOS; the speech pipeline end to end on Metal with synthetic speech, latency and accuracy in `docs/STT-EVAL.md` (STT 0.4 to 0.9 s, Vietnamese WER 13.6% on clean synthetic speech); the macOS bundle carries the microphone and system audio usage descriptions and requires macOS 13.0; release binary 15.6 MiB at Phase 2 (18.1 MiB with the cloud assistant).
 
-**Binary size, accepted:** with embeddings the macOS release binary is 49.8 MiB (38.4 MiB stripped) instead of 18.1 MiB, because ONNX Runtime is linked statically (`ort`'s prebuilt `libonnxruntime.a` is 80 MB before linking). Decided on 2026-11-02 to keep it rather than download the runtime on first use (`ort` feature `load-dynamic`) or switch to a pure-Rust engine (`candle`). Cheap ways to shrink it later: `strip = true` and LTO in the release profile. Measured on macOS arm64 with no `strip` or LTO set.
+**Binary size, accepted:** with embeddings the macOS release binary was 49.8 MiB instead of 18.1 MiB, because ONNX Runtime is linked statically (`ort`'s prebuilt `libonnxruntime.a` is 80 MB before linking). Decided on 2026-11-02 to keep it rather than download the runtime on first use (`ort` feature `load-dynamic`) or switch to a pure-Rust engine (`candle`). Then `strip = true` in the release profile brought it to 38.2 MiB (40.1 MB; the sidecar is 9.7 MB next to it). `lto = "fat"` was tried and fails to link ONNX Runtime on macOS (`___isPlatformVersionAtLeast` undefined), and gains only 1 MB on the sidecar. Measured on macOS arm64.
 
 Not yet verified (local model): the whole flow inside the Tauri app (download, listening in local-only mode, the settings card, fallback after a real provider failure); Windows (the sidecar is built CPU-only there, no Vulkan or CUDA, and nobody has built llama.cpp on the Windows CI runner yet); the first fallback answer in a session waits for the model to load (about 9 s cold).
 
@@ -249,7 +249,7 @@ Estimates assume one developer part-time.
 |---|---|
 | Tauri over Electron | ~15 MB vs ~150 MB app, Rust backend for audio/ML |
 | Local-first, cloud opt-in | Privacy, works offline, no running cost |
-| ONNX Runtime linked statically (binary 18 → 50 MB) | The embedding model needs a runtime, and downloading one per OS on first use adds a second download, checksums for archives and signing questions. Accepted over the 20 MB target; `load-dynamic` stays the way back |
+| ONNX Runtime linked statically (binary 18 → 40 MB after `strip`) | The embedding model needs a runtime, and downloading one per OS on first use adds a second download, checksums for archives and signing questions. Accepted over the 20 MB target; `load-dynamic` stays the way back |
 | One OpenAI-compatible client | OpenAI, OpenCode and most gateways speak it; new providers become config |
 | SQLite + FTS5, vectors as blobs | Single file per workspace, no server, hybrid search catches names and terms. Brute-force cosine over a few thousand chunks takes milliseconds, so no `sqlite-vec` extension is loaded |
 | Keys in OS keychain, calls from Rust only | Keys never reach the webview or disk |

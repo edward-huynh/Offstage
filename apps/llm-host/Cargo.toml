@@ -13,3 +13,10 @@ llama-cpp-2 = "0.1.160"
 [target.'cfg(target_os = "macos")'.dependencies]
 # Runs the model on the Apple GPU.
 llama-cpp-2 = { version = "0.1.160", features = ["metal"] }
+
+[features]
+# Runs the model on a Vulkan GPU (Windows and Linux). Off by default, because it cannot be tried
+# on the CI runner or here: building it needs the Vulkan SDK (`VULKAN_SDK` set), and the program
+# then links `vulkan-1.dll`, so a computer without a Vulkan driver cannot start it at all.
+# Build with `OFFSTAGE_LLM_FEATURES=vulkan npm run build` (see docs/RELEASE.md).
+vulkan = ["llama-cpp-2/vulkan"]
