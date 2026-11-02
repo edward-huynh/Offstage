@@ -4,6 +4,7 @@ import {
   CommandPalette,
   type CommandItem,
 } from "@/components/motion/command-palette";
+import { useT } from "../i18n";
 import { errorMessage, searchScripts, type ScriptHit, type ScriptMeta } from "../tauri";
 import type { Screen } from "./MainApp";
 
@@ -31,6 +32,7 @@ type Props = {
  * searches the titles and text of the contents through Rust.
  */
 export function SearchDialog({ open, onOpenChange, scripts, onNavigate, onPick }: Props) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<ScriptHit[]>([]);
   const [answered, setAnswered] = useState(false);
@@ -83,7 +85,7 @@ export function SearchDialog({ open, onOpenChange, scripts, onNavigate, onPick }
     ? hits.map((hit) => ({
         id: `hit-${hit.id}`,
         label: hit.title,
-        group: "Nội dung",
+        group: t("search.group.contents"),
         icon: FileText,
         badge: hit.snippet ? (
           <span className="hidden max-w-[220px] truncate text-xs text-muted-foreground sm:inline">
@@ -96,14 +98,14 @@ export function SearchDialog({ open, onOpenChange, scripts, onNavigate, onPick }
         ...NAV_ITEMS.map((item) => ({
           id: `nav-${item.id}`,
           label: item.label,
-          group: "Điều hướng",
+          group: t("search.group.nav"),
           icon: item.icon,
           onSelect: () => onNavigate(item.id),
         })),
         ...scripts.slice(0, 8).map((script) => ({
           id: `script-${script.id}`,
           label: script.title,
-          group: "Content gần đây",
+          group: t("search.group.recent"),
           icon: FileText,
           onSelect: () => onPick(script.id),
         })),
@@ -112,10 +114,10 @@ export function SearchDialog({ open, onOpenChange, scripts, onNavigate, onPick }
   const emptyMessage = error
     ? error
     : text && !answered
-      ? "Đang tìm…"
+      ? t("search.searching")
       : text
-        ? `Không thấy kết quả cho “${text}”.`
-        : "Chưa có nội dung nào.";
+        ? t("search.none", { text })
+        : t("search.empty");
 
   return (
     <CommandPalette
@@ -123,7 +125,7 @@ export function SearchDialog({ open, onOpenChange, scripts, onNavigate, onPick }
       onOpenChange={onOpenChange}
       items={items}
       onQueryChange={setQuery}
-      placeholder="Tìm trong nội dung…"
+      placeholder={t("search.placeholder")}
       emptyMessage={emptyMessage}
     />
   );

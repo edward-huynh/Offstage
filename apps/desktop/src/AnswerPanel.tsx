@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { t, useT } from "./i18n";
 import type { Answer } from "./useAssistant";
 import type { AssistantStatus } from "./tauri";
 
@@ -18,29 +19,30 @@ function bullets(text: string): string[] {
 }
 
 function hint(status: AssistantStatus | null): string {
-  if (!status || !status.enabled) return "Bật Trợ lý AI trong Cài đặt để nhận gợi ý trả lời.";
-  if (!status.ready) return "Trợ lý AI chưa sẵn sàng: thiếu khoá API hoặc model. Mở Cài đặt để hoàn tất.";
-  return "Đang nghe. Khi đối phương hỏi, gợi ý trả lời sẽ hiện ở đây.";
+  if (!status || !status.enabled) return t("answer.hint.off");
+  if (!status.ready) return t("answer.hint.notReady");
+  return t("answer.hint.listening");
 }
 
 /** The suggested answer in interview mode, written as the model streams it. */
 export const AnswerPanel = memo(function AnswerPanel({ answer, status, captionsOpen }: Props) {
+  useT();
   const lines = bullets(answer.text);
   const cloud = status?.enabled && status.cloud;
   const onThisMachine = status?.enabled && status.local_only;
 
   return (
-    <section className={captionsOpen ? "assist with-captions" : "assist"} aria-label="Gợi ý trả lời">
+    <section className={captionsOpen ? "assist with-captions" : "assist"} aria-label={t("answer.label")}>
       <header>
         <strong>Play with AI</strong>
         {cloud && (
-          <span className="cloud" title="Câu hỏi được gửi tới nhà cung cấp qua mạng">
-            ☁ Qua mạng
+          <span className="cloud" title={t("answer.networkTitle")}>
+            {t("answer.network")}
           </span>
         )}
         {onThisMachine && (
-          <span className="cloud" title="Mọi thứ chạy trên máy bạn, không gửi gì qua mạng">
-            💻 Trên máy
+          <span className="cloud" title={t("answer.onDeviceTitle")}>
+            {t("answer.onDevice")}
           </span>
         )}
       </header>
@@ -56,14 +58,14 @@ export const AnswerPanel = memo(function AnswerPanel({ answer, status, captionsO
             ))}
           </ul>
           {answer.phase === "done" && answer.fellBack && (
-            <p className="sources">💻 Nhà cung cấp lỗi hoặc chậm, câu trả lời này do model trên máy viết.</p>
+            <p className="sources">{t("answer.fellBack")}</p>
           )}
           {answer.phase === "done" && answer.sources.length > 0 && (
-            <p className="sources">Từ tài liệu: {answer.sources.join(" · ")}</p>
+            <p className="sources">{t("answer.sources", { sources: answer.sources.join(" · ") })}</p>
           )}
-          {answer.phase === "streaming" && lines.length === 0 && <p>Đang nghĩ…</p>}
+          {answer.phase === "streaming" && lines.length === 0 && <p>{t("answer.thinking")}</p>}
           {answer.phase === "failed" && (
-            <p className="failed">Không tạo được câu trả lời. Xem lý do ở phụ đề (phím T).</p>
+            <p className="failed">{t("answer.failed")}</p>
           )}
         </>
       )}

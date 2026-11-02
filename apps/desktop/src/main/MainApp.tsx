@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useLibrary } from "../useLibrary";
+import { useOnboarding } from "../useOnboarding";
 import { useSidebarCollapsed } from "../useSidebarCollapsed";
 import { useWorkspaces } from "../useWorkspaces";
 import { cn } from "@/lib/utils";
 import { Content } from "./Content";
 import { Home } from "./Home";
 import { Knowledge } from "./Knowledge";
+import { Onboarding } from "./Onboarding";
 import { SearchDialog } from "./SearchDialog";
 import { Settings } from "./Settings";
 import { Sidebar } from "./Sidebar";
@@ -27,6 +29,7 @@ export function MainApp() {
   const [collapsed, toggleSidebar] = useSidebarCollapsed();
   const library = useLibrary();
   const workspaces = useWorkspaces();
+  const onboarding = useOnboarding();
   const [searchOpen, setSearchOpen] = useState(false);
 
   const openTitle =
@@ -79,6 +82,9 @@ export function MainApp() {
           {screen === "settings" && <Settings />}
         </main>
       </div>
+      {onboarding.pending && (
+        <Onboarding onDone={() => void onboarding.finish()} onOpenSettings={() => setScreen("settings")} />
+      )}
       <SearchDialog
         open={searchOpen}
         onOpenChange={setSearchOpen}

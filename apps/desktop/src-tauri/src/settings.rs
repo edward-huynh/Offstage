@@ -3,7 +3,7 @@
 
 use offstage_core::{settings::AppSettings, HotkeyAction};
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{play::MAIN, storage};
 
@@ -31,6 +31,10 @@ pub fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     load(&app)
 }
 
+/// Sent after the settings were saved, to every window: the overlay changes its language when the
+/// main window's setting does.
+pub const CHANGED_EVENT: &str = "settings_changed";
+
 /// Saves the settings and applies the ones that act at once. Resolves to what was stored,
 /// which can differ from the request when a value had to be corrected.
 #[tauri::command]
@@ -38,6 +42,8 @@ pub fn update_settings(app: AppHandle, settings: AppSettings) -> Result<AppSetti
     let settings = settings.clamped();
     storage::set(&app, SETTINGS_KEY, &settings)?;
     apply_capture_protection(&app, settings.hide_main_from_capture)?;
+    // A failed emit means the window is gone, so there is nobody to tell.
+    let _ = app.emit(CHANGED_EVENT, settings);
     Ok(settings)
 }
 

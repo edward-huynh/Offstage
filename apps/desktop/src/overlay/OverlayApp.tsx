@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnswerPanel } from "../AnswerPanel";
+import { t, useT } from "../i18n";
 import { TranscriptPanel } from "../TranscriptPanel";
 import {
   captureProtection,
@@ -26,6 +27,7 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /** The overlay: reads the content being played, or shows live captions in an interview. */
 export function OverlayApp() {
+  useT();
   const [cfg, setCfg] = useState<OverlayConfig | null>(null);
   const [playing, setPlaying] = useState(false);
   const [captionsOpen, setCaptionsOpen] = useState(false);
@@ -235,59 +237,58 @@ export function OverlayApp() {
           </span>
         )}
         <span className="stop-hint" data-tauri-drag-region>
-          Esc để dừng
+          {t("overlay.stop")}
         </span>
         <span className="spacer" data-tauri-drag-region />
         {isListening && (
-          <span className="warn" title="Mic hoặc âm thanh hệ thống đang được nhận dạng" data-tauri-drag-region>
-            ● Đang nghe
+          <span className="warn" title={t("overlay.listeningTitle")} data-tauri-drag-region>
+            {t("overlay.listening")}
           </span>
         )}
         {cfg.click_through && (
           <span className="warn" data-tauri-drag-region>
-            Chuột xuyên qua · Ctrl/⌘+Alt+T để tắt
+            {t("overlay.clickThrough")}
           </span>
         )}
         {hotkeyIssues.length > 0 && (
           <span className="warn" title={hotkeyIssues.join("\n")}>
-            {hotkeyIssues.length} phím tắt toàn cục lỗi
+            {t("overlay.hotkeyIssues", { count: hotkeyIssues.length })}
           </span>
         )}
         {protection === "full" && (
           <span
             className="bar-note"
-            title="Cửa sổ này không xuất hiện khi bạn chia sẻ màn hình"
+            title={t("overlay.hiddenTitle")}
             data-tauri-drag-region
           >
-            Ẩn khỏi chia sẻ
+            {t("overlay.hidden")}
           </span>
         )}
         {(protection === "best_effort" || protection === "black_box") && (
           <span
             className="warn"
-            title="Hệ điều hành có thể vẫn cho người khác thấy cửa sổ này khi bạn chia sẻ màn hình"
+            title={t("overlay.maybeVisibleTitle")}
             data-tauri-drag-region
           >
-            Có thể bị thấy
+            {t("overlay.maybeVisible")}
           </span>
         )}
         <button
           type="button"
           className="bar-btn"
           onClick={() => setPlaying((p) => !p)}
-          aria-label={playing ? "Tạm dừng (Space)" : "Chạy (Space)"}
-          title={playing ? "Tạm dừng (Space)" : "Chạy (Space)"}
+          aria-label={playing ? t("overlay.pauseKey") : t("overlay.playKey")}
+          title={playing ? t("overlay.pauseKey") : t("overlay.playKey")}
           disabled={cfg.click_through}
         >
-          {playing ? "Tạm dừng" : "Chạy"}
+          {playing ? t("overlay.pause") : t("overlay.play")}
           {!playing && <kbd>Space</kbd>}
         </button>
       </header>
 
       {protection === "black_box" && (
         <p className="notice" role="status">
-          Windows bản cũ: khi chia sẻ màn hình, người xem sẽ thấy ô đen thay cho cửa sổ này. Cần Windows 10
-          bản 2004 trở lên.
+          {t("overlay.blackBox")}
         </p>
       )}
 

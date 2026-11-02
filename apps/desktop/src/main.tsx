@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { MainApp } from "./main/MainApp";
 import { OverlayApp } from "./overlay/OverlayApp";
+import { useLanguageSync } from "./i18n/useLanguageSync";
 import { windowView } from "./tauri";
 import "./styles/theme.css";
 import "./styles/base.css";
@@ -13,7 +14,13 @@ const view = windowView();
 document.documentElement.dataset.view = view;
 document.documentElement.dataset.theme = "dark";
 document.documentElement.dataset.platform = /Mac/i.test(navigator.userAgent) ? "mac" : "other";
-const Root = view === "overlay" ? OverlayApp : MainApp;
+const Window = view === "overlay" ? OverlayApp : MainApp;
+
+/** The window, with its language kept in step with the setting. */
+function Root() {
+  useLanguageSync();
+  return <Window />;
+}
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

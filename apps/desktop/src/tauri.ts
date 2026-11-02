@@ -196,6 +196,27 @@ export type ModelInfo = {
 /** What `start_listening` fails with when the speech model has not been downloaded. */
 export const MODEL_MISSING = "model_missing";
 
+/** What the system lets the app do with an audio source. */
+export type Access = "granted" | "denied" | "not_determined" | "unknown";
+
+export type AudioPermissions = { microphone: Access; system_audio: Access };
+
+/**
+ * The audio permissions as far as they can be read. The microphone one can be; the system audio one
+ * shows as `unknown` until a start attempt fails (macOS has no public call for it), and Windows
+ * needs neither.
+ */
+export async function audioPermissions(): Promise<AudioPermissions> {
+  if (!inTauri()) return { microphone: "unknown", system_audio: "unknown" };
+  return invoke<AudioPermissions>("audio_permissions");
+}
+
+/** Asks for the microphone if the user has not decided, and resolves with their answer. */
+export async function requestMicrophoneAccess(): Promise<Access> {
+  if (!inTauri()) return "unknown";
+  return invoke<Access>("request_microphone_access");
+}
+
 /** A privacy page in the system settings. */
 export type PrivacyPane = "microphone" | "system_audio";
 
@@ -627,6 +648,10 @@ export type AppSettings = {
   interview_system_audio: boolean;
   interview_microphone: boolean;
   hide_main_from_capture: boolean;
+  /** The language of the app's own text. */
+  ui_language: "vi" | "en";
+  /** The first-run walkthrough was finished or skipped. */
+  onboarding_done: boolean;
 };
 
 const SETTINGS_DEFAULTS: AppSettings = {
@@ -634,7 +659,11 @@ const SETTINGS_DEFAULTS: AppSettings = {
   interview_system_audio: true,
   interview_microphone: false,
   hide_main_from_capture: true,
+  ui_language: "vi",
+  onboarding_done: false,
 };
+
+const settingsListeners = new Set<(settings: AppSettings) => void>();
 
 let browserSettings: AppSettings = SETTINGS_DEFAULTS;
 
@@ -652,9 +681,19 @@ export async function updateSettings(settings: AppSettings): Promise<AppSettings
         ? settings
         : { ...settings, interview_system_audio: true };
     browserSettings = fixed;
+    settingsListeners.forEach((fn) => fn(fixed));
     return fixed;
   }
   return invoke<AppSettings>("update_settings", { settings });
+}
+
+/** Called with the settings after any window saved them, so every window can follow a change. */
+export async function onSettingsChanged(handler: (settings: AppSettings) => void): Promise<() => void> {
+  if (!inTauri()) {
+    settingsListeners.add(handler);
+    return () => void settingsListeners.delete(handler);
+  }
+  return listen<AppSettings>("settings_changed", (event) => handler(event.payload));
 }
 
 export type HotkeyBinding = { action: "play_pause" | "speed_up" | "speed_down" | "toggle_visibility" | "toggle_click_through"; accelerator: string };

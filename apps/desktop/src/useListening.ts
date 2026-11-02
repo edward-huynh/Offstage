@@ -19,6 +19,7 @@ import {
   type PrivacyPane,
   type Speaker,
 } from "./tauri";
+import { t } from "./i18n";
 
 /** Lines kept on screen. Older ones are dropped, the overlay is a live view, not a log. */
 const MAX_LINES = 40;
@@ -34,10 +35,10 @@ const DEMO_LINES: Line[] = [
   { id: -1, speaker: "remote", text: "Còn về hiệu năng thì sao?" },
 ];
 
-/** Rust reports errors in English. Permission problems are common, so they get plain Vietnamese. */
+/** Rust reports errors in English. Permission problems are common, so they get plain words in the user's language. */
 function friendlyError(message: string): string {
   if (message.startsWith("permission denied")) {
-    return "Chưa được cấp quyền truy cập âm thanh. Hãy cho phép trong cài đặt hệ thống rồi thử lại.";
+    return t("listening.permissionDenied");
   }
   return message;
 }

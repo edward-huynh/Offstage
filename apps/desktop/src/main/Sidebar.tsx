@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { cn } from "@/lib/utils";
+import { useT } from "../i18n";
 import type { Library } from "../useLibrary";
 import type { Workspaces } from "../useWorkspaces";
 import type { Screen } from "./MainApp";
@@ -51,13 +52,14 @@ export function Sidebar(props: Props) {
 }
 
 function FloatingSidebar(props: Props) {
+  const t = useT();
   return (
     <div className="group fixed inset-y-0 left-0 z-40 w-1.5">
       <button
         type="button"
         onClick={props.onToggle}
-        aria-label="Ghim thanh bên"
-        title="Ghim thanh bên"
+        aria-label={t("sidebar.pin")}
+        title={t("sidebar.pin")}
         className={cn(
           "absolute left-0 top-1/2 z-20 flex h-10 w-6 -translate-y-1/2 items-center justify-center",
           "rounded-r-lg border border-l-0 border-border/60 bg-[#0e131a] text-muted-foreground/50",
@@ -83,6 +85,7 @@ function FloatingSidebar(props: Props) {
 function SidebarPanel({ screen, onNavigate, library, workspaces, onToggle, onSearch, floating }: Props & {
   floating?: boolean;
 }) {
+  const t = useT();
   const create = async () => {
     if (await library.create()) onNavigate("content");
   };
@@ -96,7 +99,7 @@ function SidebarPanel({ screen, onNavigate, library, workspaces, onToggle, onSea
 
   return (
     <nav
-      aria-label="Điều hướng"
+      aria-label={t("sidebar.nav")}
       className={cn(
         "flex h-full min-h-0 flex-col bg-[#0e131a] px-2",
         !floating && "border-r border-border/60",
@@ -107,8 +110,8 @@ function SidebarPanel({ screen, onNavigate, library, workspaces, onToggle, onSea
           variant="ghost"
           size="icon"
           onClick={onToggle}
-          aria-label={floating ? "Ghim thanh bên" : "Thu gọn thanh bên"}
-          title={floating ? "Ghim thanh bên" : "Thu gọn thanh bên"}
+          aria-label={floating ? t("sidebar.pin") : t("sidebar.collapse")}
+          title={floating ? t("sidebar.pin") : t("sidebar.collapse")}
           className="size-8 text-muted-foreground/70 hover:text-foreground"
         >
           <PanelLeft className="size-4" />
@@ -118,19 +121,19 @@ function SidebarPanel({ screen, onNavigate, library, workspaces, onToggle, onSea
       <button
         type="button"
         onClick={() => void create()}
-        title="Content mới"
+        title={t("sidebar.newContent")}
         className="mb-1 flex h-9 w-full shrink-0 items-center gap-2.5 rounded-lg px-3 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground"
       >
         <Plus className="size-4 shrink-0" />
-        <span>Content mới</span>
+        <span>{t("sidebar.newContent")}</span>
       </button>
 
       {workspaces.workspaces.length > 1 && workspaces.active && (
         <label className="mb-1 flex h-9 w-full shrink-0 items-center gap-2.5 rounded-lg px-3 text-[13px] text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground">
           <Briefcase className="size-4 shrink-0" aria-hidden />
           <select
-            aria-label="Workspace đang dùng"
-            title="Workspace đang dùng"
+            aria-label={t("sidebar.workspace")}
+            title={t("sidebar.workspace")}
             value={workspaces.active.id}
             onChange={(e) => void workspaces.select(e.target.value)}
             className="min-w-0 flex-1 cursor-pointer truncate bg-transparent font-medium text-foreground outline-none"
@@ -188,9 +191,9 @@ function SidebarPanel({ screen, onNavigate, library, workspaces, onToggle, onSea
             variant="ghost"
             size="icon"
             onClick={onSearch}
-            aria-label="Tìm nội dung"
+            aria-label={t("sidebar.search")}
             aria-haspopup="dialog"
-            title="Tìm nội dung (Ctrl/⌘+K)"
+            title={t("sidebar.searchTitle")}
             className="size-7 text-muted-foreground/70 hover:text-foreground"
           >
             <Search className="size-3.5" />
@@ -199,8 +202,8 @@ function SidebarPanel({ screen, onNavigate, library, workspaces, onToggle, onSea
             variant="ghost"
             size="icon"
             onClick={() => void importFile()}
-            aria-label="Nhập tệp"
-            title="Nhập tệp .txt hoặc .md"
+            aria-label={t("sidebar.import")}
+            title={t("sidebar.importTitle")}
             className="size-7 text-muted-foreground/70 hover:text-foreground"
           >
             <Upload className="size-3.5" />
@@ -237,7 +240,7 @@ function SidebarPanel({ screen, onNavigate, library, workspaces, onToggle, onSea
           );
         })}
         {library.ready && library.scripts.length === 0 && (
-          <li className="px-3 py-2 text-[12.5px] text-muted-foreground/70">Chưa có nội dung</li>
+          <li className="px-3 py-2 text-[12.5px] text-muted-foreground/70">{t("sidebar.noContent")}</li>
         )}
       </ul>
 

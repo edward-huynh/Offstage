@@ -25,6 +25,16 @@ impl SpeechLanguage {
     }
 }
 
+/// The language of the app's own text.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UiLanguage {
+    /// Vietnamese first, as the project is.
+    #[default]
+    Vi,
+    En,
+}
+
 /// Persisted app settings. Missing fields fall back to defaults so files written by
 /// older versions keep loading.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -37,6 +47,10 @@ pub struct AppSettings {
     pub interview_microphone: bool,
     /// Hide the main window from screen shares. It shows CV and JD text.
     pub hide_main_from_capture: bool,
+    /// The language of the app's own text.
+    pub ui_language: UiLanguage,
+    /// The first-run walkthrough was finished or skipped. It is shown until then.
+    pub onboarding_done: bool,
 }
 
 impl AppSettings {
@@ -58,6 +72,8 @@ impl Default for AppSettings {
             interview_system_audio: true,
             interview_microphone: false,
             hide_main_from_capture: true,
+            ui_language: UiLanguage::Vi,
+            onboarding_done: false,
         }
     }
 }
@@ -87,6 +103,19 @@ mod tests {
     }
 
     #[test]
+    fn the_app_speaks_vietnamese_and_shows_the_walkthrough_until_it_is_done() {
+        let d = AppSettings::default();
+        assert_eq!(d.ui_language, UiLanguage::Vi);
+        assert!(!d.onboarding_done);
+        // Settings saved before these two existed get the same.
+        let old: AppSettings = serde_json::from_str(r#"{"speech_language":"english"}"#).unwrap();
+        assert_eq!(old.ui_language, UiLanguage::Vi);
+        assert!(!old.onboarding_done);
+        assert_eq!(serde_json::to_string(&UiLanguage::En).unwrap(), "\"en\"");
+        assert!(serde_json::from_str::<UiLanguage>("\"fr\"").is_err());
+    }
+
+    #[test]
     fn an_empty_object_is_the_defaults() {
         let s: AppSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(s, AppSettings::default());
@@ -99,6 +128,8 @@ mod tests {
             interview_system_audio: false,
             interview_microphone: true,
             hide_main_from_capture: false,
+            ui_language: UiLanguage::En,
+            onboarding_done: true,
         };
         let json = serde_json::to_string(&s).unwrap();
         assert_eq!(serde_json::from_str::<AppSettings>(&json).unwrap(), s);

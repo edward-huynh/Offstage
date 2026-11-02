@@ -6,6 +6,7 @@ import { Input } from "@/components/motion/input";
 import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { cn } from "@/lib/utils";
 import { type ImportReport, type IndexStatus, type KnowledgeKind } from "../tauri";
+import { locale, useT, type Key } from "../i18n";
 import { useEmbeddingModel } from "../useEmbeddingModel";
 import { useKnowledge } from "../useKnowledge";
 import { EmptyState, ErrorNote, Progress, Screen } from "./ui";
@@ -13,9 +14,9 @@ import { EmptyState, ErrorNote, Progress, Screen } from "./ui";
 /** Formats a document can be written in, instead of imported from a file. */
 type WrittenKind = Extract<KnowledgeKind, "markdown" | "text">;
 
-const FORMATS: { value: WrittenKind; label: string }[] = [
-  { value: "markdown", label: "Markdown (.md)" },
-  { value: "text", label: "Văn bản (.txt)" },
+const FORMATS: { value: WrittenKind; label: Key | null }[] = [
+  { value: "markdown", label: null },
+  { value: "text", label: "knowledge.format.text" },
 ];
 
 /** How long "delete" waits for a second click before it goes back to normal. */
@@ -37,21 +38,21 @@ function formatSize(bytes: number): string {
 }
 
 /** What the AI can do with a document: read it, not yet, or never (with the reason in `error`). */
-function readState(status: IndexStatus | undefined): { label: string; tone: string } {
-  if (!status) return { label: "Đang đọc…", tone: "bg-muted text-muted-foreground" };
-  if (status.error) return { label: "Không đọc được", tone: "bg-destructive/10 text-destructive" };
-  return { label: "AI đã đọc", tone: "bg-success/10 text-success" };
+function readState(status: IndexStatus | undefined): { label: Key; tone: string } {
+  if (!status) return { label: "knowledge.state.reading", tone: "bg-muted text-muted-foreground" };
+  if (status.error) return { label: "knowledge.state.unreadable", tone: "bg-destructive/10 text-destructive" };
+  return { label: "knowledge.state.read", tone: "bg-success/10 text-success" };
 }
 
 function formatDate(ms: number): string | null {
   if (ms <= 1000) return null;
-  return new Date(ms).toLocaleDateString("vi-VN", { dateStyle: "short" });
+  return new Date(ms).toLocaleDateString(locale(), { dateStyle: "short" });
 }
 
 /** The user's own documents (JD, CV, rubric...). The AI reads them to ground its answers. */
 export function Knowledge({ workspaceName }: { workspaceName?: string }) {
-  const knowledge = useKnowledge();
-  const embedding = useEmbeddingModel();
+  const t = useT();
+  const knowledge = useKnowledge();  const embedding = useEmbeddingModel();
   const [report, setReport] = useState<ImportReport | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
@@ -113,45 +114,57 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
         <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
           {workspaceName ? (
             <>
-              Tài liệu của workspace <strong className="font-medium text-foreground">{workspaceName}</strong>, như mô
-              tả công việc, CV hay tiêu chí đánh giá.
+              {/* The name is bold, so the sentence is cut at its place. */}
+              {t("knowledge.intro.workspace", { name: "{name}" })
+                .split("{name}")
+                .flatMap((part, i) =>
+                  i === 0
+                    ? [part]
+                    : [
+                        <strong key="name" className="font-medium text-foreground">
+                          {workspaceName}
+                        </strong>,
+                        part,
+                      ],
+                )}
             </>
           ) : (
-            "Tài liệu của bạn, như mô tả công việc, CV hay tiêu chí đánh giá."
+            t("knowledge.intro.plain")
           )}{" "}
-          Thêm tệp .pdf, .docx, .md, .txt (tối đa 20 MB mỗi tệp) hoặc tự gõ, dán nội dung vào.
+          {t("knowledge.intro.add")}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" size="sm" disabled={writing} onClick={openForm}>
             <FilePlus2 className="size-4" />
-            Tạo tài liệu
+            {t("knowledge.create")}
           </Button>
           <Button size="sm" disabled={knowledge.importing} onClick={() => void add()}>
             <FileUp className="size-4" />
-            {knowledge.importing ? "Đang thêm…" : "Thêm tệp"}
+            {knowledge.importing ? t("knowledge.adding") : t("knowledge.addFile")}
           </Button>
         </div>
       </div>
 
       <p className="text-xs leading-relaxed text-muted-foreground">
-        Khi Trợ lý AI bật, đối phương hỏi, app tìm vài đoạn liên quan trong các tài liệu này rồi gửi
-        kèm câu hỏi để gợi ý trả lời dựa trên đó. Việc đọc tệp và tìm đoạn diễn ra ngay trên máy
-        bạn; chỉ các đoạn được chọn mới được gửi đi nếu bạn dùng nhà cung cấp qua mạng.
+        {t("knowledge.how")}
       </p>
 
       {embedding.info && (
         <section
-          aria-label="Tìm theo nghĩa"
+          aria-label={t("knowledge.semantic.title")}
           className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3"
         >
           <div className="min-w-0 flex-1 basis-72">
-            <h2 className="text-sm font-semibold">Tìm theo nghĩa</h2>
+            <h2 className="text-sm font-semibold">{t("knowledge.semantic.title")}</h2>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
               {embedding.info.installed
                 ? embedding.info.pending_chunks > 0
-                  ? `Đang chuẩn bị tài liệu: còn ${embedding.info.pending_chunks} đoạn.`
-                  : "Đang bật: AI tìm được đoạn liên quan cả khi câu hỏi không dùng đúng từ trong tài liệu, kể cả khác ngôn ngữ."
-                : `Tải một mô hình nhỏ (khoảng ${megabytes(embedding.info.size)} MB, giấy phép ${embedding.info.license}) để AI tìm được đoạn liên quan cả khi câu hỏi không dùng đúng từ trong tài liệu, kể cả khác ngôn ngữ. Mô hình chạy ngay trên máy bạn. Chưa tải thì AI vẫn tìm theo từ.`}
+                  ? t("knowledge.semantic.preparing", { count: embedding.info.pending_chunks })
+                  : t("knowledge.semantic.on")
+                : t("knowledge.semantic.off", {
+                    size: megabytes(embedding.info.size),
+                    license: embedding.info.license,
+                  })}
             </p>
             {embedding.error && <ErrorNote className="mt-2">{embedding.error}</ErrorNote>}
           </div>
@@ -167,19 +180,19 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
                   {embedding.progress.total > 0 ? ` / ${megabytes(embedding.progress.total)}` : ""} MB
                 </span>
                 <Button variant="ghost" size="sm" onClick={embedding.cancel}>
-                  Huỷ
+                  {t("common.cancel")}
                 </Button>
               </div>
             </div>
           ) : embedding.info.installed ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
               <Check className="size-3.5" />
-              Đã tải
+              {t("common.downloaded")}
             </span>
           ) : (
             <Button size="sm" onClick={() => void embedding.download()}>
               <Download className="size-4" />
-              Tải về
+              {t("common.download")}
             </Button>
           )}
         </section>
@@ -200,10 +213,10 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
               orientation="horizontal"
               value={kind}
               onValueChange={(value) => setKind(value as WrittenKind)}
-              aria-label="Định dạng"
+              aria-label={t("knowledge.form.format")}
             >
               {FORMATS.map((format) => (
-                <RadioGroupItem key={format.value} value={format.value} label={format.label} />
+                <RadioGroupItem key={format.value} value={format.value} label={format.label ? t(format.label) : "Markdown (.md)"} />
               ))}
             </RadioGroup>
             <Input
@@ -212,8 +225,8 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
               classNames={{ field: "h-10 rounded-xl", input: "text-sm" }}
               value={title}
               maxLength={100}
-              placeholder="Tên tài liệu"
-              aria-label="Tên tài liệu"
+              placeholder={t("knowledge.form.title")}
+              aria-label={t("knowledge.form.title")}
               onChange={setTitle}
             />
           </div>
@@ -222,9 +235,9 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
             className="mn-scroll min-h-56 resize-none rounded-xl border border-border bg-background p-4 font-sans text-[15px] leading-relaxed text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-border-strong"
             value={text}
             placeholder={
-              kind === "markdown" ? "Gõ hoặc dán nội dung Markdown…" : "Gõ hoặc dán nội dung…"
+              kind === "markdown" ? t("knowledge.form.markdown") : t("knowledge.form.text")
             }
-            aria-label="Nội dung"
+            aria-label={t("knowledge.form.body")}
             spellCheck={false}
             onChange={(e) => setText(e.target.value)}
           />
@@ -232,15 +245,15 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
             <span>
               {text.trim() === ""
-                ? "Chưa có nội dung"
+                ? t("knowledge.form.noText")
                 : formatSize(new TextEncoder().encode(text).length)}
             </span>
             <div className="flex items-center gap-2">
               <Button type="button" variant="secondary" size="sm" disabled={saving} onClick={closeForm}>
-                Huỷ
+                {t("common.cancel")}
               </Button>
               <Button type="submit" size="sm" disabled={saving || text.trim() === ""}>
-                {saving ? "Đang lưu…" : "Lưu tài liệu"}
+                {saving ? t("knowledge.form.saving") : t("knowledge.form.save")}
               </Button>
             </div>
           </div>
@@ -253,11 +266,11 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
           className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm leading-relaxed text-muted-foreground"
         >
           {report.imported.length > 0 && (
-            <p className="text-foreground">Đã thêm {report.imported.length} tài liệu.</p>
+            <p className="text-foreground">{t("knowledge.report.added", { count: report.imported.length })}</p>
           )}
           {report.skipped.length > 0 && (
             <>
-              <p>Bỏ qua {report.skipped.length} tệp:</p>
+              <p>{t("knowledge.report.skipped", { count: report.skipped.length })}</p>
               <ul className="mt-1 list-disc space-y-1 pl-5">
                 {report.skipped.map((s, i) => (
                   <li key={`${s.name}-${i}`}>
@@ -280,11 +293,11 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
               disabled={knowledge.importing}
               onClick={() => void add()}
             >
-              Chọn tệp để thêm
+              {t("knowledge.pickFiles")}
             </Button>
           }
         >
-          Chưa có tài liệu nào.
+          {t("knowledge.none")}
         </EmptyState>
       ) : (
         <Card className="bg-card">
@@ -319,7 +332,7 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
                         state.tone,
                       )}
                     >
-                      {state.label}
+                      {t(state.label)}
                     </span>
                     <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
                       {formatSize(doc.size_bytes)}
@@ -328,7 +341,7 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
                     <Button
                       variant="outline"
                       size="sm"
-                      aria-label={`Xoá ${doc.name}`}
+                      aria-label={t("knowledge.deleteLabel", { name: doc.name })}
                       className={cn(
                         "shrink-0",
                         asking
@@ -338,7 +351,7 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
                       onClick={() => void remove(doc.id)}
                     >
                       <Trash2 className="size-3.5" />
-                      {asking ? "Chắc chắn xoá?" : "Xoá"}
+                      {asking ? t("common.confirmDelete") : t("common.delete")}
                     </Button>
                   </li>
                 );

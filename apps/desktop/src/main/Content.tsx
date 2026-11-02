@@ -3,10 +3,15 @@ import { FilePlus2, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { Input } from "@/components/motion/input";
 import { cn } from "@/lib/utils";
+import { locale, useT } from "../i18n";
 import type { Library } from "../useLibrary";
 import { EmptyState, ErrorNote, Screen } from "./ui";
 
-const SAVE_LABEL = { saved: "Đã lưu", saving: "Đang lưu…", unsaved: "Chưa lưu" } as const;
+const SAVE_LABEL = {
+  saved: "content.saved",
+  saving: "content.saving",
+  unsaved: "content.unsaved",
+} as const;
 /** How long "delete" waits for a second click before it goes back to normal. */
 const CONFIRM_MS = 3000;
 
@@ -14,11 +19,12 @@ const wordCount = (text: string) => text.trim().split(/\s+/).filter(Boolean).len
 
 function lastEdited(updatedAt: number): string | null {
   if (updatedAt <= 0) return null;
-  return new Date(updatedAt).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+  return new Date(updatedAt).toLocaleString(locale(), { dateStyle: "short", timeStyle: "short" });
 }
 
 /** Edit the contents (scripts) read by the teleprompter. The list lives in the sidebar; this is the editor. */
 export function Content({ library: scripts }: { library: Library }) {
+  const t = useT();
   const { flush } = scripts;
 
   // Leaving the screen saves what is still waiting for the pause that triggers autosave.
@@ -59,16 +65,16 @@ export function Content({ library: scripts }: { library: Library }) {
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button onClick={() => void scripts.create()}>
                 <FilePlus2 className="size-4" />
-                Content mới
+                {t("sidebar.newContent")}
               </Button>
               <Button variant="secondary" onClick={() => void scripts.importFile()}>
                 <Upload className="size-4" />
-                Nhập tệp .txt hoặc .md
+                {t("content.import")}
               </Button>
             </div>
           }
         >
-          Chưa có nội dung nào. Tạo một nội dung mới hoặc nhập tệp để bắt đầu.
+          {t("content.empty")}
         </EmptyState>
       ) : open ? (
         <div className="flex min-h-0 flex-1 flex-col gap-3 rounded-2xl border border-border bg-card p-4">
@@ -80,7 +86,7 @@ export function Content({ library: scripts }: { library: Library }) {
                 input: "px-2 text-lg font-semibold",
               }}
               value={title}
-              aria-label="Tên nội dung"
+              aria-label={t("content.title")}
               onChange={setTitle}
               onBlur={commitTitle}
               onKeyDown={(e) => {
@@ -106,21 +112,22 @@ export function Content({ library: scripts }: { library: Library }) {
               }}
             >
               <Trash2 className="size-3.5" />
-              {confirming ? "Chắc chắn xoá?" : "Xoá"}
+              {confirming ? t("content.confirmDelete") : t("content.delete")}
             </Button>
           </div>
 
           <textarea
             className="mn-scroll min-h-0 flex-1 resize-none rounded-xl border border-border bg-background p-4 font-sans text-[15px] leading-relaxed text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-border-strong"
             value={scripts.body}
-            aria-label="Nội dung"
-            placeholder="Gõ hoặc dán nội dung. Ngắt đoạn bằng một dòng trống: mỗi đoạn thành một khối khi đọc."
+            aria-label={t("content.body")}
+            placeholder={t("content.placeholder")}
             onChange={(e) => scripts.edit(e.target.value)}
           />
 
           <footer className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
             <span>
-              {wordCount(scripts.body)} từ{edited ? ` · sửa lần cuối ${edited}` : ""}
+              {t("content.words", { count: wordCount(scripts.body) })}
+              {edited ? t("content.lastEdited", { when: edited }) : ""}
             </span>
             <span
               className={cn(
@@ -129,12 +136,12 @@ export function Content({ library: scripts }: { library: Library }) {
                 scripts.saveState === "unsaved" && "text-primary",
               )}
             >
-              {SAVE_LABEL[scripts.saveState]}
+              {t(SAVE_LABEL[scripts.saveState])}
             </span>
           </footer>
         </div>
       ) : (
-        <EmptyState className="flex-1">Chọn một nội dung ở thanh bên để sửa.</EmptyState>
+        <EmptyState className="flex-1">{t("content.pick")}</EmptyState>
       )}
     </Screen>
   );

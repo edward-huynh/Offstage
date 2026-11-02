@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/motion/card";
 import { Input } from "@/components/motion/input";
 import { Switch } from "@/components/motion/switch";
 import { cn } from "@/lib/utils";
+import { useT } from "../i18n";
 import type { Workspace, WorkspaceUpdate } from "../tauri";
 import type { Workspaces as WorkspacesState } from "../useWorkspaces";
 import { ErrorNote, Row, Screen } from "./ui";
@@ -27,6 +28,7 @@ const SELECT_CLASS =
  * note for the model, and may keep the call on this machine or use another provider.
  */
 export function Workspaces({ state }: { state: WorkspacesState }) {
+  const t = useT();
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -41,9 +43,7 @@ export function Workspaces({ state }: { state: WorkspacesState }) {
   return (
     <Screen>
       <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
-        Mỗi workspace dành cho một tình huống, như một buổi phỏng vấn hay một cuộc gọi bán hàng. Nó có tài liệu riêng
-        (mục Knowledge), một ghi chú cho AI, và có thể giữ cuộc gọi chỉ trên máy hoặc dùng nhà cung cấp khác. AI chỉ tìm
-        trong tài liệu của workspace đang dùng.
+        {t("workspaces.intro")}
       </p>
 
       <form
@@ -58,13 +58,13 @@ export function Workspaces({ state }: { state: WorkspacesState }) {
           classNames={{ field: "h-10 rounded-xl", input: "text-sm" }}
           value={name}
           maxLength={80}
-          placeholder="Tên workspace mới"
-          aria-label="Tên workspace mới"
+          placeholder={t("workspaces.newName")}
+          aria-label={t("workspaces.newName")}
           onChange={setName}
         />
         <Button type="submit" size="sm" disabled={creating || name.trim() === ""}>
           <Plus className="size-4" />
-          Tạo workspace
+          {t("workspaces.create")}
         </Button>
       </form>
 
@@ -103,6 +103,7 @@ function WorkspaceCard({
   onDelete: () => void;
 }) {
   // What is being typed, until the field loses focus: a half-typed name is not worth saving.
+  const t = useT();
   const [name, setName] = useState(workspace.name);
   const [note, setNote] = useState(workspace.note);
   const [model, setModel] = useState(workspace.model ?? "");
@@ -139,7 +140,7 @@ function WorkspaceCard({
             classNames={{ field: "h-10 rounded-xl", input: "text-sm font-medium" }}
             value={name}
             maxLength={80}
-            aria-label="Tên workspace"
+            aria-label={t("workspaces.name")}
             onChange={setName}
             onBlur={() => {
               if (name.trim() === "") setName(workspace.name);
@@ -149,19 +150,19 @@ function WorkspaceCard({
           {inUse ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
               <Check className="size-3.5" />
-              Đang dùng
+              {t("workspaces.inUse")}
             </span>
           ) : (
             <Button variant="secondary" size="sm" onClick={onUse}>
-              Dùng workspace này
+              {t("workspaces.use")}
             </Button>
           )}
           <Button
             variant="outline"
             size="sm"
             disabled={onlyOne}
-            title={onlyOne ? "Phải còn ít nhất một workspace" : undefined}
-            aria-label={`Xoá ${workspace.name}`}
+            title={onlyOne ? t("workspaces.lastOne") : undefined}
+            aria-label={t("knowledge.deleteLabel", { name: workspace.name })}
             className={cn(
               "shrink-0",
               confirming
@@ -177,24 +178,23 @@ function WorkspaceCard({
             }}
           >
             <Trash2 className="size-3.5" />
-            {confirming ? "Xoá cả tài liệu?" : "Xoá"}
+            {confirming ? t("workspaces.confirmDelete") : t("common.delete")}
           </Button>
         </div>
 
         <div className="mt-2 flex flex-col gap-1.5">
           <label className="text-sm font-medium text-foreground" htmlFor={`note-${workspace.id}`}>
-            Ghi chú cho AI
+            {t("workspaces.note")}
           </label>
           <span className="text-xs leading-relaxed text-muted-foreground">
-            Điều bạn muốn AI biết về tình huống này mà tài liệu không nói, như vị trí ứng tuyển, công ty, người nghe.
-            AI dùng nó để hiểu bối cảnh, còn sự thật vẫn lấy từ tài liệu.
+            {t("workspaces.noteHint")}
           </span>
           <textarea
             id={`note-${workspace.id}`}
             className="mn-scroll min-h-24 resize-y rounded-xl border border-border bg-background p-3 font-sans text-[14px] leading-relaxed text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-border-strong"
             value={note}
             maxLength={2000}
-            placeholder="Ví dụ: Phỏng vấn vị trí backend Rust ở công ty ABC, người phỏng vấn là trưởng nhóm kỹ thuật."
+            placeholder={t("workspaces.notePlaceholder")}
             spellCheck={false}
             onChange={(e) => setNote(e.target.value)}
             onBlur={() => {
@@ -204,27 +204,27 @@ function WorkspaceCard({
         </div>
 
         <Row
-          label="Chỉ chạy trên máy"
-          hint="Với workspace này, không gửi lời thoại hay tài liệu đi đâu, kể cả khi cài đặt chung dùng nhà cung cấp qua mạng. Cần model trên máy (Cài đặt, Trợ lý AI)."
+          label={t("workspaces.localOnly")}
+          hint={t("workspaces.localOnlyHint")}
         >
           <Switch
-            label={`Chỉ chạy trên máy cho ${workspace.name}`}
+            label={t("workspaces.localOnlyFor", { name: workspace.name })}
             checked={workspace.local_only}
             onCheckedChange={(on) => save({ local_only: on })}
           />
         </Row>
 
         <Row
-          label="Nhà cung cấp riêng"
-          hint="Dùng nhà cung cấp khác với cài đặt chung. Khoá API vẫn là khoá đã lưu trong Cài đặt."
+          label={t("workspaces.provider")}
+          hint={t("workspaces.providerHint")}
         >
           <select
             className={SELECT_CLASS}
-            aria-label="Nhà cung cấp riêng"
+            aria-label={t("workspaces.provider")}
             value={workspace.provider_id ?? ""}
             onChange={(e) => save({ provider_id: e.target.value || null, model: e.target.value ? workspace.model : null })}
           >
-            <option value="">Dùng cài đặt chung</option>
+            <option value="">{t("workspaces.providerDefault")}</option>
             {PROVIDERS.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}
@@ -234,8 +234,8 @@ function WorkspaceCard({
           {workspace.provider_id && (
             <Input
               className="w-48"
-              aria-label="Model của nhà cung cấp riêng"
-              placeholder="Tên model"
+              aria-label={t("workspaces.modelLabel")}
+              placeholder={t("workspaces.modelPlaceholder")}
               value={model}
               onChange={setModel}
               onBlur={() => {

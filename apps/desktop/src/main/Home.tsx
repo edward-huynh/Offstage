@@ -14,6 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { errorMessage, startPlay, type AssistantStatus, type PlaySession } from "../tauri";
 import { useAssistantStatus } from "../useAssistant";
 import { useContents } from "../useContents";
+import { useT, locale, type Key } from "../i18n";
 import { useModel } from "../useModel";
 import type { Screen } from "./MainApp";
 import { EmptyState, ErrorNote, Progress, Screen as ScreenFrame } from "./ui";
@@ -22,25 +23,24 @@ const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
 
 function lastEdited(updatedAt: number): string | null {
   if (updatedAt <= 0) return null;
-  return new Date(updatedAt).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+  return new Date(updatedAt).toLocaleString(locale(), { dateStyle: "short", timeStyle: "short" });
 }
 
-/** One line on whether the assistant will suggest answers. */
-function assistantNote(status: AssistantStatus | null): string {
-  if (!status) return "Trợ lý AI gợi ý câu trả lời cho câu hỏi của đối phương.";
+/** The key of the line on whether the assistant will suggest answers. */
+function assistantNote(status: AssistantStatus | null): Key {
+  if (!status) return "home.assistant.default";
   if (status.ready) {
-    return status.cloud
-      ? "Trợ lý AI đang bật: câu hỏi của đối phương được gửi qua mạng để gợi ý trả lời."
-      : "Trợ lý AI đang bật và chạy trên máy bạn.";
+    if (status.local_only) return "home.assistant.localOnly";
+    return status.cloud ? "home.assistant.cloud" : "home.assistant.local";
   }
-  if (status.enabled) return "Trợ lý AI đã bật nhưng chưa sẵn sàng: thiếu khoá API hoặc model.";
-  return "Trợ lý AI đang tắt. Bật để nhận gợi ý trả lời.";
+  if (status.enabled) return "home.assistant.notReady";
+  return "home.assistant.off";
 }
 
 /** Two ways to start: read a Content, or Play with AI in an Interview. */
 export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
-  const contents = useContents();
-  const model = useModel();
+  const t = useT();
+  const contents = useContents();  const model = useModel();
   const assistant = useAssistantStatus();
   const [starting, setStarting] = useState<"content" | "interview" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +59,7 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
 
   return (
     <ScreenFrame className="gap-5">
-      <p className="text-sm text-muted-foreground">Chọn cách bạn muốn bắt đầu.</p>
+      <p className="text-sm text-muted-foreground">{t("home.choose")}</p>
 
       {error && <ErrorNote>{error}</ErrorNote>}
 
@@ -72,30 +72,30 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
               </span>
               <div>
                 <CardTitle as="h2">Content</CardTitle>
-                <CardDescription>Đọc một nội dung bằng teleprompter.</CardDescription>
+                <CardDescription>{t("home.content.description")}</CardDescription>
               </div>
             </div>
           </CardHeader>
 
           <CardContent className="flex-1">
             {!contents.loaded ? (
-              <p className="text-sm text-muted-foreground">Đang tải nội dung…</p>
+              <p className="text-sm text-muted-foreground">{t("home.content.loading")}</p>
             ) : contents.items.length === 0 ? (
               <EmptyState
                 action={
                   <Button variant="secondary" size="sm" onClick={() => onNavigate("content")}>
-                    Tạo ở mục Content
+                    {t("home.content.create")}
                   </Button>
                 }
               >
-                Chưa có nội dung nào.
+                {t("home.content.empty")}
               </EmptyState>
             ) : (
               <ScrollArea className="max-h-72">
                 <RadioGroup
                   value={contents.selected ?? undefined}
                   onValueChange={(id) => void contents.select(id)}
-                  aria-label="Chọn nội dung"
+                  aria-label={t("home.content.pick")}
                 >
                   {contents.items.map((item) => {
                     const when = lastEdited(item.updated_at);
@@ -104,7 +104,7 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
                         key={item.id}
                         value={item.id}
                         label={item.title}
-                        description={when ? `Sửa lần cuối ${when}` : undefined}
+                        description={when ? t("home.content.lastEdited", { when }) : undefined}
                       />
                     );
                   })}
@@ -122,7 +122,7 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
                 contents.selected && void play({ mode: "content", content_id: contents.selected })
               }
             >
-              {starting === "content" ? "Đang mở…" : "Play"}
+              {starting === "content" ? t("home.opening") : "Play"}
             </Button>
           </CardFooter>
         </Card>
@@ -135,14 +135,14 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
               </span>
               <div>
                 <CardTitle as="h2">Interview</CardTitle>
-                <CardDescription>Nghe cuộc phỏng vấn và hiện phụ đề trực tiếp.</CardDescription>
+                <CardDescription>{t("home.interview.description")}</CardDescription>
               </div>
             </div>
           </CardHeader>
 
           <CardContent className="flex flex-1 flex-col gap-3">
             <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-background/40 px-3.5 py-3">
-              <span className="text-sm">Mô hình nhận dạng giọng nói</span>
+              <span className="text-sm">{t("home.model.label")}</span>
               <span
                 className={
                   model.installed
@@ -151,21 +151,24 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
                 }
               >
                 {model.installed && <Check className="size-3.5" />}
-                {model.installed ? "Đã có" : "Chưa tải"}
+                {model.installed ? t("home.model.installed") : t("home.model.missing")}
               </span>
             </div>
 
             {!model.installed && !model.progress && (
               <div className="flex flex-col items-start gap-2.5 rounded-xl border border-dashed border-border p-3.5">
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  Cần tải mô hình một lần
-                  {model.info
-                    ? ` (khoảng ${megabytes(model.info.spec.size)} MB, giấy phép ${model.info.spec.license})`
-                    : ""}
-                  . Mọi thứ chạy trên máy bạn.
+                  {t("home.model.needed", {
+                    details: model.info
+                      ? t("home.model.details", {
+                          size: megabytes(model.info.spec.size),
+                          license: model.info.spec.license,
+                        })
+                      : "",
+                  })}
                 </p>
                 <Button variant="secondary" size="sm" onClick={() => void model.download()}>
-                  Tải mô hình
+                  {t("home.model.download")}
                 </Button>
               </div>
             )}
@@ -175,11 +178,13 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
                 <Progress value={model.progress.downloaded} max={model.progress.total || undefined} />
                 <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
                   <span>
-                    Đang tải {megabytes(model.progress.downloaded)}
-                    {model.progress.total > 0 ? ` / ${megabytes(model.progress.total)}` : ""} MB
+                    {t("home.model.downloading", {
+                      done: megabytes(model.progress.downloaded),
+                      of: model.progress.total > 0 ? ` / ${megabytes(model.progress.total)}` : "",
+                    })}
                   </span>
                   <Button variant="ghost" size="sm" onClick={model.cancel}>
-                    Huỷ
+                    {t("common.cancel")}
                   </Button>
                 </div>
               </div>
@@ -190,13 +195,13 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
             <p className="mt-auto flex items-start gap-2 text-xs leading-relaxed text-muted-foreground">
               <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" />
               <span>
-                {assistantNote(assistant)}{" "}
+                {t(assistantNote(assistant))}{" "}
                 <button
                   type="button"
                   className="font-medium text-primary underline-offset-2 hover:underline"
                   onClick={() => onNavigate("settings")}
                 >
-                  Mở Cài đặt
+                  {t("home.openSettings")}
                 </button>
               </span>
             </p>
@@ -209,7 +214,7 @@ export function Home({ onNavigate }: { onNavigate: (screen: Screen) => void }) {
               disabled={!model.installed || starting !== null}
               onClick={() => void play({ mode: "interview", content_id: null })}
             >
-              {starting === "interview" ? "Đang mở…" : "Nghe và hiện phụ đề"}
+              {starting === "interview" ? t("home.opening") : t("home.listen")}
             </Button>
           </CardFooter>
         </Card>

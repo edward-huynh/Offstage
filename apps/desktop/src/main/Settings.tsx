@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Check,
   Download,
+  Globe,
   Keyboard,
   Loader2,
   Mic,
@@ -25,6 +26,7 @@ import {
   type OverlayConfig,
   type SpeechLanguage,
 } from "../tauri";
+import { setLanguage, useT, type Key, type Lang } from "../i18n";
 import { useModel } from "../useModel";
 import { useSettings } from "../useSettings";
 import { AssistantSettings } from "./AssistantSettings";
@@ -32,35 +34,33 @@ import { ErrorNote, Progress, Row, Screen, Section, SegmentedTabs } from "./ui";
 
 const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
 
-const LANGUAGES: { value: SpeechLanguage; label: string }[] = [
-  { value: "auto", label: "Tự nhận" },
-  { value: "vietnamese", label: "Tiếng Việt" },
-  { value: "english", label: "English" },
+const LANGUAGES: { value: SpeechLanguage; label: Key }[] = [
+  { value: "auto", label: "settings.lang.auto" },
+  { value: "vietnamese", label: "settings.lang.vi" },
+  { value: "english", label: "settings.lang.en" },
 ];
 
-const HOTKEY_LABELS: Record<HotkeyBinding["action"], string> = {
-  play_pause: "Chạy / tạm dừng cuộn",
-  speed_up: "Cuộn nhanh hơn",
-  speed_down: "Cuộn chậm hơn",
-  toggle_visibility: "Ẩn / hiện overlay",
-  toggle_click_through: "Chuột xuyên qua",
+const HOTKEY_LABELS: Record<HotkeyBinding["action"], Key> = {
+  play_pause: "settings.hotkey.play_pause",
+  speed_up: "settings.hotkey.speed_up",
+  speed_down: "settings.hotkey.speed_down",
+  toggle_visibility: "settings.hotkey.toggle_visibility",
+  toggle_click_through: "settings.hotkey.toggle_click_through",
 };
 
-const PROTECTION_TEXT: Record<CaptureProtection, string> = {
-  full: "Hệ điều hành này ẩn cửa sổ khỏi chia sẻ màn hình.",
-  black_box:
-    "Windows bản cũ: người xem sẽ thấy ô đen thay cho cửa sổ. Cần Windows 10 bản 2004 trở lên.",
-  best_effort:
-    "Có hiệu lực với hầu hết ứng dụng chia sẻ. Một số bản macOS mới có thể vẫn thấy cửa sổ.",
-  unknown: "Chưa rõ hệ điều hành này có ẩn được cửa sổ hay không.",
+const PROTECTION_TEXT: Record<CaptureProtection, Key> = {
+  full: "settings.protection.full",
+  black_box: "settings.protection.black_box",
+  best_effort: "settings.protection.best_effort",
+  unknown: "settings.protection.unknown",
 };
 
 /** Sections are read in tabs, one group of related settings at a time. */
 const GROUPS = [
-  { id: "look", label: "Giao diện", icon: <SlidersHorizontal className="size-4" /> },
-  { id: "speech", label: "Giọng nói", icon: <Mic className="size-4" /> },
-  { id: "assistant", label: "Trợ lý AI", icon: <Sparkles className="size-4" /> },
-  { id: "system", label: "Hệ thống", icon: <ShieldCheck className="size-4" /> },
+  { id: "look", label: "settings.group.look", icon: <SlidersHorizontal className="size-4" /> },
+  { id: "speech", label: "settings.group.speech", icon: <Mic className="size-4" /> },
+  { id: "assistant", label: "settings.group.assistant", icon: <Sparkles className="size-4" /> },
+  { id: "system", label: "settings.group.system", icon: <ShieldCheck className="size-4" /> },
 ] as const;
 
 type GroupId = (typeof GROUPS)[number]["id"];
@@ -163,6 +163,7 @@ function SliderRow(props: {
  * only one group of sections is on screen at a time.
  */
 export function Settings() {
+  const t = useT();
   const { settings, overlay, error, change, changeOverlay } = useSettings();
   const model = useModel();
   const [group, setGroup] = useSettingsGroup();
@@ -182,7 +183,7 @@ export function Settings() {
         ) : (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            Đang tải cài đặt…
+            {t("settings.loading")}
           </p>
         )}
       </Screen>
@@ -196,10 +197,10 @@ export function Settings() {
     <section className="flex min-h-0 w-full flex-1 flex-col">
       <div className="shrink-0 px-8 pt-5 pb-4">
         <SegmentedTabs
-          items={GROUPS}
+          items={GROUPS.map((g) => ({ ...g, label: t(g.label) }))}
           value={group}
           onChange={setGroup}
-          label="Nhóm cài đặt"
+          label={t("settings.groups")}
           idPrefix="settings"
         />
       </div>
@@ -210,12 +211,34 @@ export function Settings() {
 
           <GroupPanel id="look" active={group === "look"}>
             <Section
-              title="Overlay"
-              hint="Cách teleprompter hiện khi chạy. Đang đọc cũng chỉnh được bằng phím tắt."
+              title={t("settings.app.title")}
+              hint={t("settings.app.hint")}
+              icon={<Globe className="size-4.5" />}
+            >
+              <Row label={t("settings.app.language")}>
+                <RadioGroup
+                  orientation="horizontal"
+                  value={settings.ui_language}
+                  onValueChange={(v) => {
+                    // At once, in this window; Rust tells the others.
+                    setLanguage(v as Lang);
+                    void change({ ui_language: v as Lang });
+                  }}
+                  aria-label={t("settings.app.language")}
+                >
+                  <RadioGroupItem value="vi" label={t("settings.lang.vi")} />
+                  <RadioGroupItem value="en" label={t("settings.lang.en")} />
+                </RadioGroup>
+              </Row>
+            </Section>
+
+            <Section
+              title={t("settings.overlay.title")}
+              hint={t("settings.overlay.hint")}
               icon={<SlidersHorizontal className="size-4.5" />}
             >
               <SliderRow
-                label="Cỡ chữ"
+                label={t("settings.overlay.fontSize")}
                 value={overlay.font_size}
                 min={16}
                 max={96}
@@ -224,7 +247,7 @@ export function Settings() {
                 onChange={(v) => look({ font_size: v })}
               />
               <SliderRow
-                label="Tốc độ cuộn"
+                label={t("settings.overlay.speed")}
                 value={overlay.scroll_speed}
                 min={5}
                 max={300}
@@ -233,8 +256,8 @@ export function Settings() {
                 onChange={(v) => look({ scroll_speed: v })}
               />
               <SliderRow
-                label="Độ trong suốt"
-                hint="Càng thấp càng thấy rõ phía sau."
+                label={t("settings.overlay.opacity")}
+                hint={t("settings.overlay.opacityHint")}
                 value={overlay.opacity}
                 min={0.2}
                 max={1}
@@ -243,8 +266,8 @@ export function Settings() {
                 onChange={(v) => look({ opacity: v })}
               />
               <SliderRow
-                label="Vị trí dòng đọc"
-                hint="Tính từ mép trên của overlay."
+                label={t("settings.overlay.readingLine")}
+                hint={t("settings.overlay.readingLineHint")}
                 value={overlay.reading_line}
                 min={0.1}
                 max={0.9}
@@ -252,11 +275,11 @@ export function Settings() {
                 format={(v) => `${Math.round(v * 100)}%`}
                 onChange={(v) => look({ reading_line: v })}
               />
-              <Row label="Lật gương" hint="Dùng khi đọc qua kính phản chiếu.">
+              <Row label={t("settings.overlay.mirror")} hint={t("settings.overlay.mirrorHint")}>
                 <Switch
                   checked={overlay.mirror}
                   onCheckedChange={(v) => look({ mirror: v })}
-                  ariaLabel="Lật gương"
+                  ariaLabel={t("settings.overlay.mirror")}
                 />
               </Row>
             </Section>
@@ -264,32 +287,36 @@ export function Settings() {
 
           <GroupPanel id="speech" active={group === "speech"}>
             <Section
-              title="Nhận dạng giọng nói"
-              hint="Chạy trên máy bạn, âm thanh không được lưu và không gửi đi đâu."
+              title={t("settings.speech.title")}
+              hint={t("settings.speech.hint")}
               icon={<Mic className="size-4.5" />}
             >
-              <Row label="Ngôn ngữ" hint="Áp dụng từ lần bắt đầu nghe tiếp theo.">
+              <Row label={t("settings.speech.language")} hint={t("settings.speech.languageHint")}>
                 <RadioGroup
                   orientation="horizontal"
                   value={settings.speech_language}
                   onValueChange={(v) => void change({ speech_language: v as SpeechLanguage })}
-                  aria-label="Ngôn ngữ nhận dạng"
+                  aria-label={t("settings.speech.languageLabel")}
                 >
                   {LANGUAGES.map((l) => (
-                    <RadioGroupItem key={l.value} value={l.value} label={l.label} />
+                    <RadioGroupItem key={l.value} value={l.value} label={t(l.label)} />
                   ))}
                 </RadioGroup>
               </Row>
               <Row
-                label="Mô hình giọng nói"
+                label={t("settings.speech.model")}
                 hint={
                   model.info
-                    ? `${model.info.spec.file_name}, khoảng ${megabytes(model.info.spec.size)} MB. Giấy phép ${model.info.spec.license}.`
+                    ? t("settings.speech.modelHint", {
+                        file: model.info.spec.file_name,
+                        size: megabytes(model.info.spec.size),
+                        license: model.info.spec.license,
+                      })
                     : undefined
                 }
               >
                 {model.info === null ? (
-                  <span className="text-sm text-muted-foreground">Không đọc được thông tin mô hình</span>
+                  <span className="text-sm text-muted-foreground">{t("settings.speech.modelUnknown")}</span>
                 ) : model.progress ? (
                   <div className="flex w-64 flex-col gap-2">
                     <Progress value={model.progress.downloaded} max={model.progress.total || undefined} />
@@ -299,19 +326,19 @@ export function Settings() {
                         {model.progress.total > 0 ? ` / ${megabytes(model.progress.total)}` : ""} MB
                       </span>
                       <Button variant="ghost" size="sm" onClick={model.cancel}>
-                        Huỷ
+                        {t("common.cancel")}
                       </Button>
                     </div>
                   </div>
                 ) : model.installed ? (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
                     <Check className="size-3.5" />
-                    Đã tải
+                    {t("common.downloaded")}
                   </span>
                 ) : (
                   <Button size="sm" onClick={() => void model.download()}>
                     <Download className="size-4" />
-                    Tải về
+                    {t("common.download")}
                   </Button>
                 )}
               </Row>
@@ -319,38 +346,38 @@ export function Settings() {
             </Section>
 
             <Section
-              title="Âm thanh và quyền"
-              hint="Nguồn được nghe khi bạn bấm Play with AI trong Interview."
+              title={t("settings.audio.title")}
+              hint={t("settings.audio.hint")}
               icon={<Volume2 className="size-4.5" />}
             >
-              <Row label="Âm thanh hệ thống" hint="Giọng của người bên kia cuộc gọi.">
+              <Row label={t("settings.audio.system")} hint={t("settings.audio.systemHint")}>
                 <Switch
-                  label="Nghe âm thanh hệ thống"
+                  label={t("settings.audio.systemLabel")}
                   checked={sources.system}
                   onCheckedChange={(v) => void change({ interview_system_audio: v })}
                 />
               </Row>
-              <Row label="Micro" hint="Giọng của bạn.">
+              <Row label={t("settings.audio.mic")} hint={t("settings.audio.micHint")}>
                 <Switch
-                  label="Nghe micro"
+                  label={t("settings.audio.micLabel")}
                   checked={sources.mic}
                   onCheckedChange={(v) => void change({ interview_microphone: v })}
                 />
               </Row>
-              <Row label="Quyền truy cập" hint="Nếu máy hỏi quyền mà bạn lỡ từ chối, mở trang cài đặt để cấp lại.">
+              <Row label={t("settings.audio.access")} hint={t("settings.audio.accessHint")}>
                 <Button
                   variant="secondary"
                   size="sm"
                   onClick={() => void openPrivacySettings("microphone")}
                 >
-                  Quyền micro
+                  {t("settings.audio.micPermission")}
                 </Button>
                 <Button
                   variant="secondary"
                   size="sm"
                   onClick={() => void openPrivacySettings("system_audio")}
                 >
-                  Quyền âm thanh hệ thống
+                  {t("settings.audio.systemPermission")}
                 </Button>
               </Row>
             </Section>
@@ -361,31 +388,31 @@ export function Settings() {
           </GroupPanel>
 
           <GroupPanel id="system" active={group === "system"}>
-            <Section title="Quyền riêng tư" icon={<ShieldCheck className="size-4.5" />}>
+            <Section title={t("settings.privacy.title")} icon={<ShieldCheck className="size-4.5" />}>
               <Row
-                label="Ẩn cửa sổ chính khi chia sẻ màn hình"
-                hint="Cửa sổ này hiện nội dung, CV và mô tả công việc. Overlay luôn được ẩn."
+                label={t("settings.privacy.hideMain")}
+                hint={t("settings.privacy.hideMainHint")}
               >
                 <Switch
-                  label="Ẩn cửa sổ chính khỏi chia sẻ màn hình"
+                  label={t("settings.privacy.hideMainLabel")}
                   checked={settings.hide_main_from_capture}
                   onCheckedChange={(v) => void change({ hide_main_from_capture: v })}
                 />
               </Row>
               <p className="py-3.5 text-xs leading-relaxed text-muted-foreground">
-                {PROTECTION_TEXT[protection]}
+                {t(PROTECTION_TEXT[protection])}
               </p>
             </Section>
 
             <Section
-              title="Phím tắt"
-              hint="Hoạt động cả khi Offstage không ở phía trước. Chưa đổi được."
+              title={t("settings.hotkeys.title")}
+              hint={t("settings.hotkeys.hint")}
               icon={<Keyboard className="size-4.5" />}
             >
               <ul className="flex flex-col divide-y divide-border">
                 {hotkeys.map((h) => (
                   <li key={h.action} className="flex items-center justify-between gap-4 py-3">
-                    <span className="text-sm">{HOTKEY_LABELS[h.action]}</span>
+                    <span className="text-sm">{t(HOTKEY_LABELS[h.action])}</span>
                     <kbd
                       className={cn(
                         "shrink-0 rounded-md border border-border bg-background px-2 py-1 font-sans text-[11px] text-foreground",

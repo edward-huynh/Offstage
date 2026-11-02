@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef } from "react";
+import { t, useT, type Key } from "./i18n";
 import type { DownloadProgress, Line } from "./useListening";
 import type { ModelInfo, PrivacyPane, Speaker } from "./tauri";
 
@@ -23,12 +24,11 @@ type Props = {
   onDismissError: () => void;
 };
 
-const LABEL: Record<Speaker, string> = { me: "Tôi", remote: "Đối phương" };
+const LABEL: Record<Speaker, Key> = { me: "captions.me", remote: "captions.remote" };
 
-const PERMISSION_HELP: Record<PrivacyPane, string> = {
-  microphone: "Offstage chưa được dùng micro. Mở Cài đặt, bật Offstage trong mục Micro, rồi bấm Thử lại.",
-  system_audio:
-    "Offstage chưa được ghi âm thanh hệ thống. Mở Cài đặt, bật Offstage trong mục Ghi âm thanh hệ thống, rồi bấm Thử lại. Nếu vẫn không được, hãy thoát và mở lại Offstage.",
+const PERMISSION_HELP: Record<PrivacyPane, Key> = {
+  microphone: "captions.permission.microphone",
+  system_audio: "captions.permission.systemAudio",
 };
 
 const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
@@ -56,6 +56,7 @@ export const TranscriptPanel = memo(function TranscriptPanel({
   onClear,
   onDismissError,
 }: Props) {
+  useT();
   const list = useRef<HTMLOListElement>(null);
 
   // Keep the newest line in view.
@@ -73,23 +74,23 @@ export const TranscriptPanel = memo(function TranscriptPanel({
       onClick={() => onToggle(speaker)}
     >
       <span className="dot" aria-hidden />
-      {busy === speaker ? "Đang chuẩn bị…" : name} <kbd>{key}</kbd>
+      {busy === speaker ? t("captions.preparing") : name} <kbd>{key}</kbd>
     </button>
   );
 
   return (
-    <section className="transcript" aria-label="Phụ đề trực tiếp">
+    <section className="transcript" aria-label={t("captions.label")}>
       <div className="tr-bar">
-        {source("me", "Mic", "1")}
-        {source("remote", "Âm thanh hệ thống", "2")}
+        {source("me", t("captions.mic"), "1")}
+        {source("remote", t("captions.systemAudio"), "2")}
         <span className="spacer" />
         {latencyMs !== null && (
-          <span className="tr-latency" title="Từ lúc câu nói kết thúc đến lúc có chữ, chưa tính khoảng lặng chờ cuối câu">
+          <span className="tr-latency" title={t("captions.latency")}>
             {(latencyMs / 1000).toFixed(1)} s
           </span>
         )}
         <button type="button" onClick={onClear} disabled={lines.length === 0}>
-          Xoá
+          {t("captions.clear")}
         </button>
       </div>
 
@@ -97,23 +98,27 @@ export const TranscriptPanel = memo(function TranscriptPanel({
         <div className="tr-notice">
           <progress value={progress.downloaded} max={progress.total || undefined} />
           <span>
-            Đang tải mô hình {megabytes(progress.downloaded)}
-            {progress.total > 0 ? ` / ${megabytes(progress.total)}` : ""} MB
+            {t("captions.downloading", {
+              done: megabytes(progress.downloaded),
+              of: progress.total > 0 ? ` / ${megabytes(progress.total)}` : "",
+            })}
           </span>
           <button type="button" onClick={onCancel}>
-            Huỷ
+            {t("common.cancel")}
           </button>
         </div>
       ) : (
         needsModel && (
           <div className="tr-notice">
             <span>
-              Cần tải mô hình nhận dạng giọng nói một lần
-              {model ? ` (khoảng ${megabytes(model.spec.size)} MB, giấy phép ${model.spec.license})` : ""}. Mọi thứ
-              chạy trên máy bạn.
+              {t("captions.needModel", {
+                details: model
+                  ? t("home.model.details", { size: megabytes(model.spec.size), license: model.spec.license })
+                  : "",
+              })}
             </span>
             <button type="button" onClick={onDownload}>
-              Tải mô hình
+              {t("captions.downloadModel")}
             </button>
           </div>
         )
@@ -121,29 +126,29 @@ export const TranscriptPanel = memo(function TranscriptPanel({
 
       {permissionIssue && (
         <div className="tr-notice" role="alert">
-          <span>{PERMISSION_HELP[permissionIssue]}</span>
+          <span>{t(PERMISSION_HELP[permissionIssue])}</span>
           <button type="button" onClick={onOpenSettings}>
-            Mở Cài đặt
+            {t("home.openSettings")}
           </button>
           <button type="button" onClick={onRetryPermission}>
-            Thử lại
+            {t("captions.retry")}
           </button>
         </div>
       )}
 
       {error && (
         <p className="tr-error" role="alert">
-          {error} <button type="button" onClick={onDismissError}>Đóng</button>
+          {error} <button type="button" onClick={onDismissError}>{t("captions.dismiss")}</button>
         </p>
       )}
 
       <ol className="tr-lines" ref={list} aria-live="polite">
         {lines.length === 0 ? (
-          <li className="empty">Bật mic hoặc âm thanh hệ thống để xem phụ đề ở đây.</li>
+          <li className="empty">{t("captions.empty")}</li>
         ) : (
           lines.map((line) => (
             <li key={line.id} className={`line ${line.speaker}`}>
-              <b>{LABEL[line.speaker]}</b> {line.text}
+              <b>{t(LABEL[line.speaker])}</b> {line.text}
             </li>
           ))
         )}
