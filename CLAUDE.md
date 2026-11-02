@@ -80,7 +80,7 @@ npm run build   # build the sidecar, then installers in target/release/bundle (t
 - TypeScript: strict mode, no unused code, UI only renders state and sends commands. No business logic or network calls in the webview.
 - Commits: Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`), small and focused.
 - Tests: every crate function with logic gets unit tests. Use fixtures in `crates/<name>/tests/fixtures/`.
-- UI copy: Vietnamese first, English second (i18n arrives in Phase 5). Sentence case, plain verbs.
+- UI copy: Vietnamese first, English second, both in `apps/desktop/src/i18n/`: add a key to `vi.ts` and `en.ts`, never a string in a component. Sentence case, plain verbs.
 - Never commit: API keys, `.env`, model weights (`*.gguf`, `*.bin`, `*.onnx`), audio recordings.
 - When a roadmap task is done, tick it in section 9 and in `docs/ROADMAP.md`.
 
@@ -203,11 +203,11 @@ Estimates assume one developer part-time.
 - **Done when**: ≥ 80% answers cite the correct source on the eval set.
 
 ### Phase 5: v1.0 release (2 weeks)
-- [ ] Onboarding flow (permissions, model download, first script)
+- [x] Onboarding flow (language, speech model, permissions, where the AI runs, first script): `apps/desktop/src/main/Onboarding.tsx`, shown until `onboarding_done` is set
 - [~] Hardware detection to auto-pick model sizes (the local LLM is picked by RAM; the speech model is not)
-- [ ] Code signing (Windows, macOS notarization) and auto-update (`tauri-plugin-updater`)
-- [ ] i18n vi/en
-- [ ] User docs and landing README with GIFs
+- [ ] Code signing (Windows, macOS notarization) and auto-update (`tauri-plugin-updater`): needs the owner's certificates and keys, steps and what is ready in `docs/RELEASE.md`
+- [x] i18n vi/en: every text of the UI is in `apps/desktop/src/i18n/{vi,en}.ts`, and a key missing from `en` fails the type check. Rust error messages that reach the screen are still partly Vietnamese
+- [~] User docs and landing README: `README.md`, `docs/USER-GUIDE.md` (vi) and `docs/USER-GUIDE.en.md`; no GIFs yet
 - **Done when**: a new user is productive within 5 minutes of install.
 
 ### Later (v1.x / v2)

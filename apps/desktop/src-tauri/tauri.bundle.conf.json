@@ -1,5 +1,8 @@
 {
   "bundle": {
-    "externalBin": ["binaries/offstage-llm-host"]
+    "externalBin": ["binaries/offstage-llm-host"],
+    "macOS": {
+      "entitlements": "Entitlements.plist"
+    }
   }
 }
