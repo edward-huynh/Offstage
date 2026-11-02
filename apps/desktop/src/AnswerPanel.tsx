@@ -27,6 +27,7 @@ function hint(status: AssistantStatus | null): string {
 export const AnswerPanel = memo(function AnswerPanel({ answer, status, captionsOpen }: Props) {
   const lines = bullets(answer.text);
   const cloud = status?.enabled && status.cloud;
+  const onThisMachine = status?.enabled && status.local_only;
 
   return (
     <section className={captionsOpen ? "assist with-captions" : "assist"} aria-label="Gợi ý trả lời">
@@ -35,6 +36,11 @@ export const AnswerPanel = memo(function AnswerPanel({ answer, status, captionsO
         {cloud && (
           <span className="cloud" title="Câu hỏi được gửi tới nhà cung cấp qua mạng">
             ☁ Qua mạng
+          </span>
+        )}
+        {onThisMachine && (
+          <span className="cloud" title="Mọi thứ chạy trên máy bạn, không gửi gì qua mạng">
+            💻 Trên máy
           </span>
         )}
       </header>
@@ -49,6 +55,9 @@ export const AnswerPanel = memo(function AnswerPanel({ answer, status, captionsO
               <li key={i}>{line}</li>
             ))}
           </ul>
+          {answer.phase === "done" && answer.fellBack && (
+            <p className="sources">💻 Nhà cung cấp lỗi hoặc chậm, câu trả lời này do model trên máy viết.</p>
+          )}
           {answer.phase === "done" && answer.sources.length > 0 && (
             <p className="sources">Từ tài liệu: {answer.sources.join(" · ")}</p>
           )}

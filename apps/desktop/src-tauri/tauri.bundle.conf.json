@@ -1,0 +1,5 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/offstage-llm-host"]
+  }
+}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  EMBEDDING_MODEL_ID,
+  isSpeechModelId,
   cancelDownload,
   downloadModel,
   errorMessage,
@@ -23,10 +23,10 @@ export function useModel() {
     void modelInfo().then((i) => {
       if (!cancelled) setInfo(i);
     });
-    // The embedding model downloads through the same event, and is not this model.
+    // Every download uses the same event; this one is the speech model's.
     void onModelProgress(
       (downloaded, total) => setProgress({ downloaded, total }),
-      (id) => id !== EMBEDDING_MODEL_ID,
+      isSpeechModelId,
     ).then((off) => {
       if (cancelled) off();
       else unlisten = off;

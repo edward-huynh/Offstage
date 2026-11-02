@@ -24,6 +24,7 @@ mod assistant;
 mod embedding;
 mod knowledge;
 mod listening;
+mod local_llm;
 mod permissions;
 mod play;
 mod rag;
@@ -465,6 +466,7 @@ pub fn run() {
             ))));
             app.manage(listening::Listening::default());
             app.manage(embedding::Embedding::default());
+            app.manage(local_llm::LocalModel::default());
             app.manage(assistant::Assistant::default());
             app.manage(play::Play::default());
             // After every state above exists: reading documents and making vectors look them up.
@@ -570,6 +572,9 @@ pub fn run() {
             embedding::embedding_model_info,
             embedding::download_embedding_model,
             embedding::cancel_embedding_download,
+            local_llm::local_llm_info,
+            local_llm::download_local_llm,
+            local_llm::cancel_local_llm_download,
             assistant::assistant_get_config,
             assistant::assistant_set_config,
             assistant::assistant_status,

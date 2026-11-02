@@ -1,0 +1,15 @@
+[package]
+name = "offstage-llm-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runs a local language model for Offstage in its own process (llama.cpp)"
+
+[dependencies]
+offstage-llm-proto = { path = "../../crates/llm-proto" }
+# llama.cpp is built from source, so the build needs cmake and a C++ toolchain, like whisper.cpp.
+llama-cpp-2 = "0.1.160"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Runs the model on the Apple GPU.
+llama-cpp-2 = { version = "0.1.160", features = ["metal"] }

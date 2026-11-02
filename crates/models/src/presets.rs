@@ -82,9 +82,49 @@ pub fn multilingual_e5_small() -> Vec<ModelSpec> {
     ]
 }
 
+/// Qwen3 4B, 4-bit (Q4_K_M), the local language model that measured best for the grounded
+/// answer (`docs/LLM-BENCH.md`). The URL is pinned to a commit, and the hash is the LFS oid the
+/// Hugging Face API reports (also checked against a copy downloaded earlier). Apache-2.0.
+pub fn qwen3_4b() -> ModelSpec {
+    ModelSpec {
+        id: "qwen3-4b-q4_k_m".into(),
+        file_name: "Qwen3-4B-Q4_K_M.gguf".into(),
+        url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/\
+              bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf"
+            .into(),
+        sha256: "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5".into(),
+        size: 2_497_280_256,
+        license: "Apache-2.0".into(),
+        license_url: Some("https://huggingface.co/Qwen/Qwen3-4B-GGUF".into()),
+    }
+}
+
+/// Qwen3 1.7B, 4-bit: less than half the size and about 2.5 times faster to the first token than
+/// the 4B, for computers with little memory, at the cost of more invented detail
+/// (`docs/LLM-BENCH.md`). Apache-2.0.
+pub fn qwen3_1_7b() -> ModelSpec {
+    ModelSpec {
+        id: "qwen3-1.7b-q4_k_m".into(),
+        file_name: "Qwen3-1.7B-Q4_K_M.gguf".into(),
+        url: "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/\
+              d7f544eead698dbd1f15126ef60b45a1e1933222/Qwen3-1.7B-Q4_K_M.gguf"
+            .into(),
+        sha256: "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897".into(),
+        size: 1_107_409_472,
+        license: "Apache-2.0".into(),
+        license_url: Some("https://huggingface.co/unsloth/Qwen3-1.7B-GGUF".into()),
+    }
+}
+
+/// The language models that can run on this machine, best first.
+pub fn local_llms() -> Vec<ModelSpec> {
+    vec![qwen3_4b(), qwen3_1_7b()]
+}
+
 pub fn all() -> Vec<ModelSpec> {
     let mut all = vec![whisper_small_q5()];
     all.extend(multilingual_e5_small());
+    all.extend(local_llms());
     all
 }
 
@@ -129,6 +169,7 @@ mod tests {
         assert_eq!(ids.len(), dedup.len());
         assert!(find("whisper-small-q5_1").is_some());
         assert!(find("multilingual-e5-small/model").is_some());
+        assert!(find("qwen3-4b-q4_k_m").is_some());
         assert!(find("nope").is_none());
     }
 }

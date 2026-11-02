@@ -279,8 +279,12 @@ export async function onListeningError(handler: (message: string) => void): Prom
   return listen<ErrorEvent>("error", (event) => handler(event.payload.message));
 }
 
-/** The id the embedding model's `model_progress` events carry. Other ids are the speech model. */
+/** The id the embedding model's `model_progress` events carry. */
 export const EMBEDDING_MODEL_ID = "multilingual-e5-small";
+
+/** Every download reports through `model_progress`; these tell whose event it is. */
+export const isSpeechModelId = (id: string) => id.startsWith("whisper");
+export const isLocalLlmId = (id: string) => id.startsWith("qwen3");
 
 /** `accept` picks which model's events to follow: every download uses the same event. */
 export async function onModelProgress(
@@ -460,6 +464,49 @@ export async function cancelEmbeddingDownload(): Promise<void> {
   await invoke("cancel_embedding_download");
 }
 
+/** A language model that can run on this machine. */
+export type LocalModelInfo = {
+  id: string;
+  label: string;
+  size: number;
+  license: string;
+  installed: boolean;
+};
+
+export type LocalLlmInfo = {
+  models: LocalModelInfo[];
+  /** The program that runs the model is next to the app. False in a development build that did not build it. */
+  engine_found: boolean;
+};
+
+export async function localLlmInfo(): Promise<LocalLlmInfo | null> {
+  if (!inTauri()) {
+    return {
+      models: [
+        { id: "qwen3-4b-q4_k_m", label: "Qwen3 4B", size: 2_497_280_256, license: "Apache-2.0", installed: false },
+        { id: "qwen3-1.7b-q4_k_m", label: "Qwen3 1.7B", size: 1_107_409_472, license: "Apache-2.0", installed: false },
+      ],
+      engine_found: true,
+    };
+  }
+  try {
+    return await invoke<LocalLlmInfo>("local_llm_info");
+  } catch {
+    return null;
+  }
+}
+
+/** Resolves when the file is complete and verified. Progress arrives through `onModelProgress`. */
+export async function downloadLocalLlm(id: string): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("download_local_llm", { id });
+}
+
+export async function cancelLocalLlmDownload(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("cancel_local_llm_download");
+}
+
 export async function deleteKnowledge(id: string): Promise<void> {
   if (!inTauri()) {
     browserDocs = browserDocs.filter((d) => d.id !== id);
@@ -528,6 +575,12 @@ export type AssistantConfig = {
   provider_id: string;
   model: string | null;
   custom_base_url: string | null;
+  /** Answers are written on this machine only: nothing is sent over the network. */
+  local_only: boolean;
+  /** When the provider fails, the model on this machine answers. */
+  fallback_to_local: boolean;
+  /** Id of the model on this machine, see `LocalModelInfo`. */
+  local_model: string;
 };
 
 export type AssistantStatus = {
@@ -538,8 +591,12 @@ export type AssistantStatus = {
   needs_key: boolean;
   /** What is said in the call is sent to another machine. */
   cloud: boolean;
-  /** Enabled, with a model and a usable key: the next question will be answered. */
+  /** Enabled, with something that can answer: a provider with a model and a key, or the model on this machine. */
   ready: boolean;
+  local_only: boolean;
+  /** The model on this machine chosen in the settings is downloaded. */
+  local_installed: boolean;
+  fallback: boolean;
 };
 
 const ASSISTANT_DEFAULTS: AssistantConfig = {
@@ -547,6 +604,9 @@ const ASSISTANT_DEFAULTS: AssistantConfig = {
   provider_id: "openai",
   model: null,
   custom_base_url: null,
+  local_only: false,
+  fallback_to_local: true,
+  local_model: "qwen3-4b-q4_k_m",
 };
 
 let browserAssistant: AssistantConfig = ASSISTANT_DEFAULTS;
@@ -573,8 +633,11 @@ export async function assistantStatus(): Promise<AssistantStatus> {
       model: browserAssistant.model,
       has_key: false,
       needs_key: true,
-      cloud: true,
+      cloud: !browserAssistant.local_only,
       ready: false,
+      local_only: browserAssistant.local_only,
+      local_installed: false,
+      fallback: browserAssistant.fallback_to_local,
     };
   }
   return invoke<AssistantStatus>("assistant_status");
@@ -604,7 +667,7 @@ export async function listAssistantModels(): Promise<string[]> {
 
 type QuestionEvent = { type: "question_detected"; text: string };
 type AnswerTokenEvent = { type: "answer_token"; token: string };
-type AnswerDoneEvent = { type: "answer_done"; sources: string[] };
+type AnswerDoneEvent = { type: "answer_done"; sources: string[]; fell_back?: boolean; local?: boolean };
 
 export async function onQuestionDetected(handler: (text: string) => void): Promise<() => void> {
   if (!inTauri()) return () => {};
@@ -616,8 +679,23 @@ export async function onAnswerToken(handler: (token: string) => void): Promise<(
   return listen<AnswerTokenEvent>("answer_token", (event) => handler(event.payload.token));
 }
 
-/** `sources` names the documents the answer was written from, best first. */
-export async function onAnswerDone(handler: (sources: string[]) => void): Promise<() => void> {
+/** How an answer ended: where it came from and what it was written from. */
+export type AnswerOutcome = {
+  /** The documents the answer was written from, best first. */
+  sources: string[];
+  /** Written by the model on this machine. */
+  local: boolean;
+  /** The provider failed, so the model on this machine wrote it. */
+  fellBack: boolean;
+};
+
+export async function onAnswerDone(handler: (outcome: AnswerOutcome) => void): Promise<() => void> {
   if (!inTauri()) return () => {};
-  return listen<AnswerDoneEvent>("answer_done", (event) => handler(event.payload.sources ?? []));
+  return listen<AnswerDoneEvent>("answer_done", (event) =>
+    handler({
+      sources: event.payload.sources ?? [],
+      local: event.payload.local ?? false,
+      fellBack: event.payload.fell_back ?? false,
+    }),
+  );
 }

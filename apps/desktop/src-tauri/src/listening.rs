@@ -15,7 +15,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
-    assistant, embedding,
+    assistant, embedding, local_llm,
     permissions::{self, Access},
 };
 
@@ -221,6 +221,7 @@ fn start_blocking(app: &AppHandle, speaker: Speaker) -> Result<(), String> {
     if started.is_ok() {
         // Questions may come from now on, and finding the answer needs the embedding model.
         embedding::pin(app);
+        local_llm::pin(app);
     }
     started
 }
@@ -238,6 +239,7 @@ fn stop_blocking(app: &AppHandle, speaker: Speaker) -> Result<(), String> {
             inner.pipeline = None;
             inner.engine = None;
             embedding::unpin(app);
+            local_llm::unpin(app);
         }
     }
     Ok(())
@@ -255,6 +257,7 @@ pub fn stop_all(app: &AppHandle) {
         inner.engine = None;
     };
     embedding::unpin(app);
+    local_llm::unpin(app);
 }
 
 /// Starts listening to the microphone (`me`) or the system audio (`remote`). Fails with

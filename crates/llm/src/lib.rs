@@ -3,9 +3,11 @@
 
 pub mod config;
 pub mod history;
+pub mod local;
 pub mod openai_compat;
 pub mod presets;
 pub mod prompt;
+pub mod router;
 pub mod secrets;
 
 use serde::{Deserialize, Serialize};

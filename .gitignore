@@ -4,6 +4,8 @@ dist/
 node_modules/
 *.tsbuildinfo
 apps/desktop/src-tauri/gen/
+# The local model sidecar, copied here by scripts/prepare-sidecar.mjs for bundling
+apps/desktop/src-tauri/binaries/
 
 # OS / editor
 .DS_Store

@@ -24,7 +24,16 @@ pub struct AssistantConfig {
     pub model: Option<String>,
     /// Address of the endpoint when `provider_id` is [`CUSTOM_ID`].
     pub custom_base_url: Option<String>,
+    /// Answer with the model on this machine only: nothing is sent over the network.
+    pub local_only: bool,
+    /// When the provider fails, answer with the model on this machine (if one is installed).
+    pub fallback_to_local: bool,
+    /// Id of the model on this machine, from `offstage-models`.
+    pub local_model: String,
 }
+
+/// The model on this machine that is chosen until the user picks another.
+pub const DEFAULT_LOCAL_MODEL: &str = "qwen3-4b-q4_k_m";
 
 impl Default for AssistantConfig {
     fn default() -> Self {
@@ -33,6 +42,9 @@ impl Default for AssistantConfig {
             provider_id: "openai".into(),
             model: None,
             custom_base_url: None,
+            local_only: false,
+            fallback_to_local: true,
+            local_model: DEFAULT_LOCAL_MODEL.into(),
         }
     }
 }
@@ -101,6 +113,19 @@ mod tests {
         assert!(!c.enabled);
         assert_eq!(c.provider_id, "openai");
         assert_eq!(c.model, None);
+    }
+
+    #[test]
+    fn nothing_is_local_only_and_a_failing_provider_falls_back_by_default() {
+        let c = AssistantConfig::default();
+        assert!(!c.local_only);
+        assert!(c.fallback_to_local);
+        assert_eq!(c.local_model, DEFAULT_LOCAL_MODEL);
+        // A value saved before these options existed gets the same defaults.
+        let old: AssistantConfig =
+            serde_json::from_str(r#"{"enabled":true,"provider_id":"openai"}"#).unwrap();
+        assert!(!old.local_only && old.fallback_to_local);
+        assert_eq!(old.local_model, DEFAULT_LOCAL_MODEL);
     }
 
     #[test]

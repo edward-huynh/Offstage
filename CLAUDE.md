@@ -37,7 +37,7 @@ Open source (MIT), general purpose. Use cases we promote: presentations, intervi
 ## 4. Repository layout
 
 ```
-apps/desktop/                 Tauri app
+apps/desktop/                 Tauri app (`src-tauri/tauri.bundle.conf.json` adds the sidecar as `externalBin` for `npm run build`)
   src/                        React UI (main/, overlay/, hooks, tauri.ts)
     components/motion/        vendored beUI components (button, card, input, radio...)
     lib/                      vendored beUI helpers (ease, hooks, cn)
@@ -50,9 +50,12 @@ crates/audio/                 AudioSource trait, CpalSource (mic + loopback), re
 crates/stt/                   SpeechToText trait, WhisperStt behind the `whisper` feature (`metal`, `cuda`, `vulkan`)
 crates/models/                ModelSpec presets and a resumable, checksum-verified downloader
 crates/pipeline/              AudioSource -> Segmenter -> SpeechToText -> AppEvent, one lane per source
-crates/llm/                   LlmProvider trait, ProviderConfig, presets (OpenAI, OpenCode Zen/Go)
+crates/llm/                   LlmProvider trait, ProviderConfig, presets (OpenAI, OpenCode Zen/Go), the client of the local model sidecar, and the router (local_only, fallback, first-token timeout)
+crates/llm-proto/             JSON-lines protocol between the app and the sidecar
+apps/llm-host/                `offstage-llm-host`: runs llama.cpp (Qwen3 GGUF) in its own process
 crates/rag/                   text extraction (PDF, DOCX, MD, TXT), chunker, FTS5 index, vector storage and hybrid search (BM25 + embeddings, RRF) over the user's documents
 crates/embed/                 TextEmbedder trait, multilingual-e5-small on ONNX Runtime behind the `onnx` feature
+scripts/prepare-sidecar.mjs     builds the sidecar and copies it where Tauri bundles it from
 docs/                         ARCHITECTURE.md, ROADMAP.md
 .github/workflows/ci.yml      CI pipeline
 ```
@@ -63,10 +66,10 @@ Crates must stay independent and testable without Tauri. Only `apps/desktop/src-
 
 ```bash
 npm run setup   # install frontend deps (the Rust side also needs cmake and a C++ toolchain: `brew install cmake`)
-npm run dev     # run the desktop app (tauri dev)
+npm run dev     # build the local model sidecar, then run the desktop app (tauri dev)
 npm run ui      # frontend only in a browser, for styling work
 npm run check   # cargo fmt --check, clippy -D warnings, cargo test, tsc
-npm run build   # installers in target/release/bundle
+npm run build   # build the sidecar, then installers in target/release/bundle (the sidecar ends up next to the app's executable)
 ```
 
 **Always run `npm run check` before committing.** CI runs the same steps.
@@ -135,13 +138,16 @@ Done:
 - Provider presets with tests, Markdown chunker with tests, CI, docs, MIT license.
 - Phase 1 features: persisted settings, global hotkeys, click-through, window position, multiple scripts, old Windows warning.
 - Phase 2 code: capture (`cpal`), resample, VAD + segmenter, whisper engine, model downloader, pipeline, live captions panel (T, 1, 2), macOS permission flow (microphone is asked for up front, system audio via a guided retry).
-- Phase 3 first slice (cloud only, no documents yet): question detection from the remote captions, OpenAI-compatible streaming client, API key in the OS keychain, assistant Settings section, answer panel on the overlay. Off by default; the choice lives in the `assistant_config` key. The prompt ends with a language line ("Answer in English." / "Trả lời bằng tiếng Việt.") taken from the language Whisper reported for the question, because small models answered English questions in Vietnamese otherwise (`docs/LLM-BENCH.md`). The local model and the router are not started.
+- Phase 3 first slice (cloud only at first): question detection from the remote captions, OpenAI-compatible streaming client, API key in the OS keychain, assistant Settings section, answer panel on the overlay. Off by default; the choice lives in the `assistant_config` key. The prompt ends with a language line ("Answer in English." / "Trả lời bằng tiếng Việt.") taken from the language Whisper reported for the question, because small models answered English questions in Vietnamese otherwise (`docs/LLM-BENCH.md`). The local model and the router came after (below).
+- Phase 3 second slice (local model and router): `llama.cpp` cannot share a process with `whisper.cpp` (see the risks table), so the model runs in `offstage-llm-host`, a separate binary the app starts when an answer needs it (or when listening starts in local-only mode) and stops when listening ends. They talk in JSON lines on stdin/stdout (`offstage-llm-proto`), so there is no socket and no firewall prompt. Models: Qwen3 4B (default) and 1.7B, Q4_K_M, downloaded from Settings with checksum. `Router` (`crates/llm/src/router.rs`): `local_only` never asks the provider and never reads its key; otherwise the provider is asked first and, if it errors or writes no token within 5 s, the local model answers instead (only before any token is shown; the overlay says so). The excerpt budget drops to 3 chunks and 2,000 characters in local-only mode. Measured with the packaged sidecar and Qwen3 4B on an M1 Pro: load 9 s cold, first token 1.5 s with a grounded prompt, Vietnamese bullets in the first person.
 - Phase 4 first slice (lexical RAG): documents added in Knowledge are read in the background (PDF with `pdf-extract`, DOCX from `word/document.xml`, MD, TXT), cut into chunks and stored with an FTS5 index (migration 2, `unicode61 remove_diacritics 0`). On every detected question the assistant searches it (BM25, a relevance gate based on neighbouring word pairs and rare names, at most 4 excerpts and 4,000 characters) and sends the excerpts with the question using the grounded prompt of `docs/LLM-BENCH.md` variant D. The sources are listed under the answer on the overlay, and the Knowledge screen shows per document whether the AI could read it.
 - Phase 4 second slice (embeddings): once the user downloads multilingual-e5-small (int8, about 135 MB, a button on the Knowledge screen, five checksum-verified files through `offstage-models`), every chunk gets a 384-dimension vector (stored as a blob, compared in code, no sqlite-vec) and a question is searched both ways and fused with RRF. The best chunk of each ranking is always sent. The model is loaded while listening with the assistant on, and when chunks need vectors, and released after. Without the model search is by words only, as before. Cosine similarity cannot tell an off-topic question about the same field from an answerable one (0.87 for "explain Terraform" against Node.js notes, 0.83 for a correct English question), so the floor is only 0.83 and the grounded prompt is what makes the model say "Không có trong tài liệu." (`crates/rag/src/semantic.rs`).
 
 Verified: `npm run check` and CI (macOS and Windows, bundles uploaded; whisper builds on both, run on 219f5b5); the overlay opens on macOS; the speech pipeline end to end on Metal with synthetic speech, latency and accuracy in `docs/STT-EVAL.md` (STT 0.4 to 0.9 s, Vietnamese WER 13.6% on clean synthetic speech); the macOS bundle carries the microphone and system audio usage descriptions and requires macOS 13.0; release binary 15.6 MiB at Phase 2 (18.1 MiB with the cloud assistant).
 
 **Binary size, accepted:** with embeddings the macOS release binary is 49.8 MiB (38.4 MiB stripped) instead of 18.1 MiB, because ONNX Runtime is linked statically (`ort`'s prebuilt `libonnxruntime.a` is 80 MB before linking). Decided on 2026-11-02 to keep it rather than download the runtime on first use (`ort` feature `load-dynamic`) or switch to a pure-Rust engine (`candle`). Cheap ways to shrink it later: `strip = true` and LTO in the release profile. Measured on macOS arm64 with no `strip` or LTO set.
+
+Not yet verified (local model): the whole flow inside the Tauri app (download, listening in local-only mode, the settings card, fallback after a real provider failure); Windows (the sidecar is built CPU-only there, no Vulkan or CUDA, and nobody has built llama.cpp on the Windows CI runner yet); the first fallback answer in a session waits for the model to load (about 9 s cold).
 
 Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS (`docs/COMPATIBILITY.md` is a checklist with no results yet); the microphone and loopback sources on real hardware and the permission prompts and settings links (the system audio link points at the Screen & System Audio Recording page and is untested); the captions panel inside the Tauri window (only seen in a browser); accuracy on real human speech; Phase 2 behaviour on Windows beyond compiling; the assistant against a real provider (first-token latency, the keychain prompt on an unsigned build, the answer panel in the Tauri window).
 
@@ -175,13 +181,13 @@ Estimates assume one developer part-time.
 - **Done when**: STT latency under 1 s on GPU; Vietnamese transcript readable.
 
 ### Phase 3: LLM + providers (2 weeks)
-- [ ] `crates/llm/local.rs`: llama-cpp-2, model kept in memory, streaming tokens
+- [x] Local model: `llama-cpp-2` in the sidecar `offstage-llm-host` (not in the app process, see risks), streaming tokens, loaded while listening and released after (`crates/llm/src/local.rs`)
 - [x] `crates/llm/openai_compat.rs`: SSE streaming, both error shapes, `list_models`, `test_connection`, cancellation (tested against a mock server; not yet against a real provider)
 - [x] Keychain storage via `keyring`; env var fallback (macOS and Windows only; the keychain path is not yet exercised on a real machine)
-- [ ] Router: per-workspace provider, `local_only`, fallback, timeouts
+- [~] Router: `local_only`, fallback and first-token timeout done (`crates/llm/src/router.rs`); per-workspace provider waits for workspaces
 - [x] Question detection: heuristic first (`?`, Vietnamese question words: gì, sao, tại sao, như thế nào, bao nhiêu, có … không, ở đâu, khi nào), LLM classification optional (heuristic done in `offstage_core::question`)
 - [x] Settings UI: provider picker, paste key, Test connection, model dropdown from `/models`
-- [~] Cloud/local indicator (☁️ / 💻) on the overlay (☁️ "Qua mạng" badge when the endpoint is remote; no 💻 mark for local yet)
+- [x] Cloud/local indicator (☁️ / 💻) on the overlay, and a note under an answer the local model wrote after the provider failed
 - **Done when**: first token under 2 s after the question ends (GPU or cloud).
 
 ### Phase 4: RAG (2–3 weeks)
@@ -231,6 +237,7 @@ Estimates assume one developer part-time.
 | macOS 15+ ScreenCaptureKit ignores `sharingType` | Test early, publish compatibility table, document single-window sharing |
 | Weak Vietnamese STT on small models | PhoWhisper-small q5_1 (converted from the official weights, reproducible with `spikes/stt-bench/convert-phowhisper.sh`) cut Vietnamese WER from 14.0% to 1.7% on synthetic speech, but it is Vietnamese-only and needs a place to host the converted file (see `docs/STT-EVAL.md`). Optional cloud STT stays a separate toggle |
 | High latency on CPU-only machines | Auto-pick smaller models, suggest a cloud provider |
+| `whisper-rs` and `llama-cpp-2` cannot share one process | Both statically embed their own `ggml`. Tried 2026-11-02 on macOS (whisper-rs 0.16 with llama-cpp-2 0.1.160, both `metal`): it links without errors, whisper runs, then loading a Qwen3 context aborts with `GGML_ASSERT(a->op == GGML_OP_FLASH_ATTN_EXT)` because the symbols of the two ggml versions mix. The local LLM must run outside the app process (a sidecar) or use an engine without ggml (candle) |
 | Model licenses (e.g. Gemma terms) | Never bundle weights, show license at download |
 | Misuse and project reputation | README responsible-use section, promote legitimate use cases |
 
@@ -244,6 +251,7 @@ Estimates assume one developer part-time.
 | One OpenAI-compatible client | OpenAI, OpenCode and most gateways speak it; new providers become config |
 | SQLite + FTS5, vectors as blobs | Single file per workspace, no server, hybrid search catches names and terms. Brute-force cosine over a few thousand chunks takes milliseconds, so no `sqlite-vec` extension is loaded |
 | Keys in OS keychain, calls from Rust only | Keys never reach the webview or disk |
+| Local LLM as a sidecar process, not in the app | whisper.cpp and llama.cpp each embed their own `ggml` and cannot share a process. A sidecar also gives the memory back by exiting, and needs no socket. Costs: a second binary to bundle (+10.6 MiB) and a build step (`scripts/prepare-sidecar.mjs`) |
 | Stub crates from day one | Clear boundaries, independent tests, reusable outside the app |
 | Whisper runs with timestamps off | The app only uses text. Timestamps cost decoding steps, and models fine-tuned without them (PhoWhisper) emit stray tokens when asked for them |
 | PhoWhisper is an optional model, not the default | It is Vietnamese-only and writes lowercase text without punctuation, so `small` stays the multilingual default. Question detection must rely on Vietnamese question words, not on `?` |

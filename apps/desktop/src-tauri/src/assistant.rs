@@ -6,7 +6,10 @@
 //! chosen provider. The key stays in the OS keychain, and every request is made from here,
 //! never from the webview.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use offstage_core::{question::is_question, AppEvent, Speaker};
 use offstage_embed::{onnx::E5Embedder, TextEmbedder};
@@ -15,6 +18,7 @@ use offstage_llm::{
     history::History,
     openai_compat::{endpoint_is_local, OpenAiCompat},
     prompt::{build_messages_with_documents, Excerpt, Turn},
+    router::{ChatBackend, Policy, Router, Served},
     secrets, LlmError, LlmProvider,
 };
 use offstage_rag::{ChunkStore, SearchHit, SemanticQuery};
@@ -22,15 +26,23 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
 
-use crate::{embedding, listening::emit, rag::Rag, storage};
+use crate::{embedding, listening::emit, local_llm, rag::Rag, storage};
 
-const CONFIG_KEY: &str = "assistant_config";
+pub(crate) const CONFIG_KEY: &str = "assistant_config";
 
 /// Most excerpts of the user's documents sent with a question.
 const EXCERPTS: usize = 4;
 /// Most characters of excerpts in all, about 1,000 tokens. More makes the first token slower
 /// (`docs/LLM-BENCH.md`) without making the short answer better.
 const EXCERPT_CHARS: usize = 4_000;
+/// The same for the model on this machine, which reads the prompt at 400 tokens per second:
+/// 400 to 600 tokens of documents keep the first token near two seconds (`docs/LLM-BENCH.md`).
+const LOCAL_EXCERPTS: usize = 3;
+const LOCAL_EXCERPT_CHARS: usize = 2_000;
+
+/// How long a provider may take to write the first token before the model on this machine
+/// takes over.
+const FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub struct Assistant {
@@ -123,14 +135,46 @@ pub fn on_event(app: &AppHandle, event: &AppEvent) {
 }
 
 fn answer(app: &AppHandle, question: String, language: Option<String>, history: Vec<Turn>) {
-    match load_config(app) {
-        Ok(config) if config.enabled => {}
+    let config = match load_config(app) {
+        Ok(config) if config.enabled => config,
         Ok(_) => return,
         Err(message) => return emit(app, &AppEvent::Error { message }),
+    };
+    let local = local_llm::source(app, &config);
+    // Local-only never builds the provider: no key is read and nothing can be sent.
+    let provider: Option<Arc<dyn ChatBackend>> = if config.local_only {
+        None
+    } else {
+        match provider(app) {
+            Ok(provider) => Some(provider),
+            // A provider that cannot be built (no key yet) is not fatal when the model on this
+            // machine can answer in its place.
+            Err(_) if config.fallback_to_local && local.is_some() => None,
+            Err(message) => return emit(app, &AppEvent::Error { message }),
+        }
+    };
+    if provider.is_none() && local.is_none() {
+        return emit(
+            app,
+            &AppEvent::Error {
+                message: "Chưa tải model chạy trên máy. Mở Cài đặt, mục Trợ lý AI, để tải về."
+                    .to_owned(),
+            },
+        );
     }
-    let provider = match provider(app) {
-        Ok(provider) => provider,
-        Err(message) => return emit(app, &AppEvent::Error { message }),
+    let router = Router::new(
+        provider,
+        local,
+        Policy {
+            local_only: config.local_only,
+            fallback: config.fallback_to_local,
+            first_token_timeout: FIRST_TOKEN_TIMEOUT,
+        },
+    );
+    let budget = if config.local_only {
+        (LOCAL_EXCERPTS, LOCAL_EXCERPT_CHARS)
+    } else {
+        (EXCERPTS, EXCERPT_CHARS)
     };
 
     // A new question replaces the answer being written.
@@ -151,7 +195,7 @@ fn answer(app: &AppHandle, question: String, language: Option<String>, history: 
     let embedder = embedding::current(app);
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let excerpts = retrieve(index, embedder, question.clone()).await;
+        let excerpts = retrieve(index, embedder, question.clone(), budget).await;
         // A newer question can arrive while the documents are searched.
         if cancel.is_cancelled() {
             return;
@@ -174,12 +218,16 @@ fn answer(app: &AppHandle, question: String, language: Option<String>, history: 
                 }
             }
         };
-        match provider
-            .stream_chat_cancellable(&messages, &mut on_token, &cancel)
-            .await
-        {
+        match router.answer(&messages, &mut on_token, &cancel).await {
             Ok(_) if cancel.is_cancelled() => {}
-            Ok(_) => emit(&app, &AppEvent::AnswerDone { sources }),
+            Ok(reply) => emit(
+                &app,
+                &AppEvent::AnswerDone {
+                    sources,
+                    fell_back: reply.fell_back,
+                    local: reply.served == Served::Local,
+                },
+            ),
             Err(LlmError::Cancelled) => {}
             Err(e) => emit(
                 &app,
@@ -198,6 +246,7 @@ async fn retrieve(
     index: Option<ChunkStore>,
     embedder: Option<Arc<E5Embedder>>,
     question: String,
+    (excerpts, chars): (usize, usize),
 ) -> Vec<Excerpt> {
     let Some(index) = index else {
         return Vec::new();
@@ -216,7 +265,7 @@ async fn retrieve(
             model: embedding::MODEL_ID,
             vector,
         });
-        index.search_with(&question, semantic.as_ref(), EXCERPTS, EXCERPT_CHARS)
+        index.search_with(&question, semantic.as_ref(), excerpts, chars)
     })
     .await;
     match found {
@@ -261,11 +310,18 @@ pub struct AssistantStatus {
     pub needs_key: bool,
     /// What is said in the call is sent to another machine.
     pub cloud: bool,
-    /// Enabled, with a model and a usable key: the next question will be answered.
+    /// Enabled, with something that can answer: a provider with a model and a usable key, or the
+    /// model on this machine.
     pub ready: bool,
+    /// Answers are written on this machine only, and nothing is sent over the network.
+    pub local_only: bool,
+    /// The model on this machine chosen in the settings is downloaded.
+    pub local_installed: bool,
+    /// When the provider fails, the model on this machine answers.
+    pub fallback: bool,
 }
 
-fn status_of(config: &AssistantConfig, has_key: bool) -> AssistantStatus {
+fn status_of(config: &AssistantConfig, has_key: bool, local_installed: bool) -> AssistantStatus {
     let provider = config.provider().ok();
     let model = provider.as_ref().and_then(|p| p.model.clone());
     let local = provider
@@ -275,13 +331,24 @@ fn status_of(config: &AssistantConfig, has_key: bool) -> AssistantStatus {
     let needs_key = provider
         .as_ref()
         .is_some_and(|p| p.key_ref.is_some() && !(p.id == config::CUSTOM_ID && local));
+    let provider_ready = provider.is_some() && model.is_some() && (has_key || !needs_key);
+    // The model on this machine answers instead when it is asked to, or when the provider cannot.
+    let ready = config.enabled
+        && if config.local_only {
+            local_installed
+        } else {
+            provider_ready || (config.fallback_to_local && local_installed)
+        };
     AssistantStatus {
         enabled: config.enabled,
         provider_id: config.provider_id.clone(),
         has_key,
         needs_key,
-        cloud: provider.is_some() && !local,
-        ready: config.enabled && provider.is_some() && model.is_some() && (has_key || !needs_key),
+        cloud: !config.local_only && provider.is_some() && !local,
+        ready,
+        local_only: config.local_only,
+        local_installed,
+        fallback: config.fallback_to_local,
         model,
     }
 }
@@ -311,12 +378,21 @@ pub fn assistant_set_config(
     app: AppHandle,
     config: AssistantConfig,
 ) -> Result<AssistantConfig, String> {
-    if config.enabled {
+    // Local-only has no provider to check.
+    if config.enabled && !config.local_only {
         let chosen = config.provider().map_err(|e| e.to_string())?;
         OpenAiCompat::new(chosen, None).map_err(|e| e.to_string())?;
     }
+    if config.enabled && !local_llm::installed(&app, &config.local_model) && config.local_only {
+        return Err("Tải model chạy trên máy trước khi bật chế độ chỉ chạy trên máy.".to_owned());
+    }
+    let previous = load_config(&app)?;
     storage::set(&app, CONFIG_KEY, &config)?;
     invalidate(&app);
+    // Another model, or a switch to the provider, frees what the model on this machine holds.
+    if previous.local_model != config.local_model || previous.local_only != config.local_only {
+        local_llm::release(&app);
+    }
     if !config.enabled {
         cancel_current(&app);
     }
@@ -331,7 +407,8 @@ pub async fn assistant_status(app: AppHandle) -> Result<AssistantStatus, String>
             Some(reference) => secrets::exists(&reference).map_err(|e| e.to_string())?,
             None => false,
         };
-        Ok(status_of(&config, has_key))
+        let local_installed = local_llm::installed(&app, &config.local_model);
+        Ok(status_of(&config, has_key, local_installed))
     })
     .await
 }
@@ -387,6 +464,7 @@ mod tests {
             provider_id: provider_id.into(),
             model: model.map(str::to_owned),
             custom_base_url: None,
+            ..AssistantConfig::default()
         }
     }
 
@@ -431,16 +509,16 @@ mod tests {
     #[test]
     fn a_cloud_provider_needs_a_key_and_a_model_to_be_ready() {
         let c = config("openai", Some("gpt-4o-mini"), true);
-        let s = status_of(&c, true);
+        let s = status_of(&c, true, false);
         assert!(s.ready && s.cloud && s.needs_key && s.has_key);
 
-        assert!(!status_of(&c, false).ready, "no key");
+        assert!(!status_of(&c, false, false).ready, "no key");
         assert!(
-            !status_of(&config("openai", None, true), true).ready,
+            !status_of(&config("openai", None, true), true, false).ready,
             "no model"
         );
         assert!(
-            !status_of(&config("openai", Some("m"), false), true).ready,
+            !status_of(&config("openai", Some("m"), false), true, false).ready,
             "off"
         );
     }
@@ -451,10 +529,46 @@ mod tests {
             custom_base_url: Some("http://localhost:11434/v1".into()),
             ..config(config::CUSTOM_ID, Some("llama3"), true)
         };
-        let s = status_of(&local, false);
+        let s = status_of(&local, false, false);
         assert!(!s.cloud);
         assert!(!s.needs_key);
         assert!(s.ready, "a local endpoint needs no key");
+    }
+
+    #[test]
+    fn local_only_is_ready_with_the_model_installed_and_never_cloud() {
+        let c = AssistantConfig {
+            local_only: true,
+            ..config("openai", Some("gpt-4o-mini"), true)
+        };
+        let s = status_of(&c, true, true);
+        assert!(s.ready && !s.cloud && s.local_only && s.local_installed);
+        assert!(!status_of(&c, true, false).ready, "model not downloaded");
+        assert!(
+            status_of(
+                &AssistantConfig {
+                    local_only: true,
+                    ..config("openai", None, true)
+                },
+                false,
+                true
+            )
+            .ready,
+            "no provider needed"
+        );
+    }
+
+    #[test]
+    fn a_provider_that_is_not_ready_is_covered_by_the_local_model_when_falling_back() {
+        let c = config("openai", Some("gpt-4o-mini"), true);
+        // No key: not ready alone, ready with a model to fall back to.
+        assert!(!status_of(&c, false, false).ready);
+        assert!(status_of(&c, false, true).ready);
+        let no_fallback = AssistantConfig {
+            fallback_to_local: false,
+            ..c
+        };
+        assert!(!status_of(&no_fallback, false, true).ready);
     }
 
     #[test]
@@ -463,16 +577,16 @@ mod tests {
             custom_base_url: Some("https://openrouter.ai/api/v1".into()),
             ..config(config::CUSTOM_ID, Some("m"), true)
         };
-        let s = status_of(&remote, false);
+        let s = status_of(&remote, false, false);
         assert!(s.cloud && s.needs_key && !s.ready);
-        assert!(status_of(&remote, true).ready);
+        assert!(status_of(&remote, true, false).ready);
     }
 
     #[test]
     fn an_unusable_choice_is_not_ready_and_not_called_cloud() {
-        let unknown = status_of(&config("nope", Some("m"), true), true);
+        let unknown = status_of(&config("nope", Some("m"), true), true, false);
         assert!(!unknown.ready && !unknown.cloud);
-        let no_address = status_of(&config(config::CUSTOM_ID, Some("m"), true), true);
+        let no_address = status_of(&config(config::CUSTOM_ID, Some("m"), true), true, false);
         assert!(!no_address.ready);
     }
 }

@@ -241,6 +241,12 @@ pub enum AppEvent {
     },
     AnswerDone {
         sources: Vec<String>,
+        /// The provider failed and the model on this machine wrote the answer.
+        #[serde(default)]
+        fell_back: bool,
+        /// The answer was written on this machine, by the local model.
+        #[serde(default)]
+        local: bool,
     },
     Error {
         message: String,
@@ -517,7 +523,11 @@ mod tests {
                 text: "why?".into(),
             },
             AppEvent::AnswerToken { token: "a".into() },
-            AppEvent::AnswerDone { sources: vec![] },
+            AppEvent::AnswerDone {
+                sources: vec![],
+                fell_back: false,
+                local: false,
+            },
             AppEvent::Error {
                 message: "oops".into(),
             },

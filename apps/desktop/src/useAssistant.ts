@@ -23,9 +23,13 @@ export type Answer = {
   phase: AnswerPhase;
   /** Documents the answer was written from, known once it is done. */
   sources: string[];
+  /** Written by the model on this machine, known once it is done. */
+  local: boolean;
+  /** The provider failed, so the model on this machine wrote it. */
+  fellBack: boolean;
 };
 
-const NO_ANSWER: Answer = { question: "", text: "", phase: "idle", sources: [] };
+const NO_ANSWER: Answer = { question: "", text: "", phase: "idle", sources: [], local: false, fellBack: false };
 
 /**
  * The status of the assistant, read again whenever `refreshKey` changes. Settings are edited in
@@ -76,7 +80,7 @@ export function useAnswer(refreshKey?: unknown) {
     keep(
       onQuestionDetected((question) => {
         pending = "";
-        setAnswer({ question, text: "", phase: "streaming", sources: [] });
+        setAnswer({ question, text: "", phase: "streaming", sources: [], local: false, fellBack: false });
       }),
     );
     keep(
@@ -86,11 +90,11 @@ export function useAnswer(refreshKey?: unknown) {
       }),
     );
     keep(
-      onAnswerDone((sources) => {
+      onAnswerDone(({ sources, local, fellBack }) => {
         if (frame !== undefined) cancelAnimationFrame(frame);
         const rest = pending;
         pending = "";
-        setAnswer((a) => ({ ...a, text: a.text + rest, phase: "done", sources }));
+        setAnswer((a) => ({ ...a, text: a.text + rest, phase: "done", sources, local, fellBack }));
       }),
     );
     // Any pipeline error while an answer is being written ends it, so the panel never waits forever.
