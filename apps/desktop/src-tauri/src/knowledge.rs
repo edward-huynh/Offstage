@@ -59,13 +59,17 @@ pub async fn delete_knowledge(knowledge: State<'_, Knowledge>, id: String) -> Re
 /// Stores text typed or pasted in the app, as a `.md` or `.txt` document.
 #[tauri::command]
 pub async fn create_knowledge(
+    app: AppHandle,
     knowledge: State<'_, Knowledge>,
     title: String,
     kind: KnowledgeKind,
     text: String,
 ) -> Result<KnowledgeDoc, String> {
     let store = knowledge.0.clone();
-    crate::off_main(move || with_store(&store, |s| s.create(&title, kind, &text))).await
+    let doc =
+        crate::off_main(move || with_store(&store, |s| s.create(&title, kind, &text))).await?;
+    crate::rag::index_in_background(&app, vec![doc.id.clone()]);
+    Ok(doc)
 }
 
 /// Lets the user pick any number of documents and copies them into the store.
@@ -108,6 +112,8 @@ pub async fn import_knowledge(
             Err(reason) => report.skipped.push(SkippedFile { name, reason }),
         }
     }
+    // The AI reads them from the index, so reading starts now and the screen is not kept waiting.
+    crate::rag::index_in_background(&app, report.imported.iter().map(|d| d.id.clone()).collect());
     Ok(report)
 }
 

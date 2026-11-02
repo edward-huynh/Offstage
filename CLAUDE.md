@@ -17,7 +17,7 @@ Open source (MIT), general purpose. Use cases we promote: presentations, intervi
 | Principle | Concretely |
 |---|---|
 | Local-first | Works fully offline by default. Cloud is opt-in per workspace and visibly indicated in the overlay. |
-| Lightweight | App binary under 20 MB, idle RAM under 150 MB. Models are downloaded on first run, never bundled. |
+| Lightweight | App binary about 50 MB (it was under 20 MB until ONNX Runtime was linked in for embeddings, see section 8 and the decision log), idle RAM under 150 MB. Models are downloaded on first run, never bundled. |
 | Automated | Auto-pick models by hardware, auto-index documents, auto-fallback between providers. Avoid manual steps for the user. |
 | Extensible by config | New providers and workspace templates are config/presets, not new code paths. |
 | Private | No audio written to disk. API keys only in the OS keychain. API calls only from Rust, never from the webview. |
@@ -30,7 +30,7 @@ Open source (MIT), general purpose. Use cases we promote: presentations, intervi
 - **STT**: `whisper-rs` (whisper.cpp), model `small` q5 by default, PhoWhisper option for Vietnamese.
 - **LLM local**: `llama-cpp-2`, 3–4B instruct models in Q4 (Qwen3 4B, Gemma 3 4B class). Check Hugging Face for current versions.
 - **LLM cloud**: one OpenAI-compatible client (`reqwest` + SSE).
-- **RAG**: `fastembed-rs` (multilingual-e5-small default, bge-m3 optional), SQLite + `sqlite-vec` + FTS5, hybrid search with RRF.
+- **RAG**: `fastembed-rs` (multilingual-e5-small default, bge-m3 optional), SQLite + FTS5 with the vectors stored as blobs and compared in Rust (no `sqlite-vec`), hybrid search with RRF.
 - **Secrets**: `keyring` crate.
 - **CI**: GitHub Actions (gitleaks, fmt/clippy/test, Windows + macOS bundles).
 
@@ -51,7 +51,8 @@ crates/stt/                   SpeechToText trait, WhisperStt behind the `whisper
 crates/models/                ModelSpec presets and a resumable, checksum-verified downloader
 crates/pipeline/              AudioSource -> Segmenter -> SpeechToText -> AppEvent, one lane per source
 crates/llm/                   LlmProvider trait, ProviderConfig, presets (OpenAI, OpenCode Zen/Go)
-crates/rag/                   Chunk, SearchHit, Markdown chunker (implemented + tested)
+crates/rag/                   text extraction (PDF, DOCX, MD, TXT), chunker, FTS5 index, vector storage and hybrid search (BM25 + embeddings, RRF) over the user's documents
+crates/embed/                 TextEmbedder trait, multilingual-e5-small on ONNX Runtime behind the `onnx` feature
 docs/                         ARCHITECTURE.md, ROADMAP.md
 .github/workflows/ci.yml      CI pipeline
 ```
@@ -125,7 +126,7 @@ microphone (Me)          ─┴─► VAD ─► STT ─► question detection �
 - Query: embed question (e5 needs `query:` / `passage:` prefixes) → BM25 + vector → RRF fusion → top 4–6 chunks, max ~2000 tokens of context.
 - Prompt: answer only from documents, 3–5 short bullets, same language as the question, say "Không có trong tài liệu." when unsupported, show sources under the answer.
 
-## 8. Current status (Phase 2 done, Phase 3 cloud assistant in progress, not yet released)
+## 8. Current status (Phase 2 done, Phase 3 cloud assistant and Phase 4 in progress, not yet released)
 
 Done:
 - Repo layout, workspace, 5 crates with traits and types.
@@ -134,9 +135,13 @@ Done:
 - Provider presets with tests, Markdown chunker with tests, CI, docs, MIT license.
 - Phase 1 features: persisted settings, global hotkeys, click-through, window position, multiple scripts, old Windows warning.
 - Phase 2 code: capture (`cpal`), resample, VAD + segmenter, whisper engine, model downloader, pipeline, live captions panel (T, 1, 2), macOS permission flow (microphone is asked for up front, system audio via a guided retry).
-- Phase 3 first slice (cloud only, no documents yet): question detection from the remote captions, OpenAI-compatible streaming client, API key in the OS keychain, assistant Settings section, answer panel on the overlay. Off by default; the choice lives in the `assistant_config` key. The prompt ends with a language line ("Answer in English." / "Trả lời bằng tiếng Việt.") taken from the language Whisper reported for the question, because small models answered English questions in Vietnamese otherwise (`docs/LLM-BENCH.md`). The local model, the router and RAG are not started.
+- Phase 3 first slice (cloud only, no documents yet): question detection from the remote captions, OpenAI-compatible streaming client, API key in the OS keychain, assistant Settings section, answer panel on the overlay. Off by default; the choice lives in the `assistant_config` key. The prompt ends with a language line ("Answer in English." / "Trả lời bằng tiếng Việt.") taken from the language Whisper reported for the question, because small models answered English questions in Vietnamese otherwise (`docs/LLM-BENCH.md`). The local model and the router are not started.
+- Phase 4 first slice (lexical RAG): documents added in Knowledge are read in the background (PDF with `pdf-extract`, DOCX from `word/document.xml`, MD, TXT), cut into chunks and stored with an FTS5 index (migration 2, `unicode61 remove_diacritics 0`). On every detected question the assistant searches it (BM25, a relevance gate based on neighbouring word pairs and rare names, at most 4 excerpts and 4,000 characters) and sends the excerpts with the question using the grounded prompt of `docs/LLM-BENCH.md` variant D. The sources are listed under the answer on the overlay, and the Knowledge screen shows per document whether the AI could read it.
+- Phase 4 second slice (embeddings): once the user downloads multilingual-e5-small (int8, about 135 MB, a button on the Knowledge screen, five checksum-verified files through `offstage-models`), every chunk gets a 384-dimension vector (stored as a blob, compared in code, no sqlite-vec) and a question is searched both ways and fused with RRF. The best chunk of each ranking is always sent. The model is loaded while listening with the assistant on, and when chunks need vectors, and released after. Without the model search is by words only, as before. Cosine similarity cannot tell an off-topic question about the same field from an answerable one (0.87 for "explain Terraform" against Node.js notes, 0.83 for a correct English question), so the floor is only 0.83 and the grounded prompt is what makes the model say "Không có trong tài liệu." (`crates/rag/src/semantic.rs`).
 
-Verified: `npm run check` and CI (macOS and Windows, bundles uploaded; whisper builds on both, run on 219f5b5); the overlay opens on macOS; the speech pipeline end to end on Metal with synthetic speech, latency and accuracy in `docs/STT-EVAL.md` (STT 0.4 to 0.9 s, Vietnamese WER 13.6% on clean synthetic speech); the macOS bundle carries the microphone and system audio usage descriptions and requires macOS 13.0; release binary 15.6 MiB.
+Verified: `npm run check` and CI (macOS and Windows, bundles uploaded; whisper builds on both, run on 219f5b5); the overlay opens on macOS; the speech pipeline end to end on Metal with synthetic speech, latency and accuracy in `docs/STT-EVAL.md` (STT 0.4 to 0.9 s, Vietnamese WER 13.6% on clean synthetic speech); the macOS bundle carries the microphone and system audio usage descriptions and requires macOS 13.0; release binary 15.6 MiB at Phase 2 (18.1 MiB with the cloud assistant).
+
+**Binary size, accepted:** with embeddings the macOS release binary is 49.8 MiB (38.4 MiB stripped) instead of 18.1 MiB, because ONNX Runtime is linked statically (`ort`'s prebuilt `libonnxruntime.a` is 80 MB before linking). Decided on 2026-11-02 to keep it rather than download the runtime on first use (`ort` feature `load-dynamic`) or switch to a pure-Rust engine (`candle`). Cheap ways to shrink it later: `strip = true` and LTO in the release profile. Measured on macOS arm64 with no `strip` or LTO set.
 
 Not yet verified: screen-share exclusion in Meet, Teams, Zoom and OBS (`docs/COMPATIBILITY.md` does not exist yet); the microphone and loopback sources on real hardware and the permission prompts and settings links (the system audio link points at the Screen & System Audio Recording page and is untested); the captions panel inside the Tauri window (only seen in a browser); accuracy on real human speech; Phase 2 behaviour on Windows beyond compiling; the assistant against a real provider (first-token latency, the keychain prompt on an unsigned build, the answer panel in the Tauri window).
 
@@ -180,13 +185,13 @@ Estimates assume one developer part-time.
 - **Done when**: first token under 2 s after the question ends (GPU or cloud).
 
 ### Phase 4: RAG (2–3 weeks)
-- [ ] Workspaces: create, rename, delete, context note, provider, `local_only`
-- [ ] Ingest PDF (`pdf-extract` / `pdfium-render`), DOCX (XML), MD, TXT; drag-and-drop with background progress
-- [ ] Extend chunker to non-Markdown text
-- [ ] Embeddings via `fastembed-rs`; storage via `sqlite-vec` + FTS5
-- [ ] Hybrid search + RRF; prompt with sources
+- [ ] Workspaces: create, rename, delete, context note, provider, `local_only` (documents are one global set for now, `Workspace` is unused)
+- [~] Ingest PDF (`pdf-extract`), DOCX (XML), MD, TXT with background indexing and per-document status (no drag-and-drop, no progress bar; scanned PDFs are reported as unreadable)
+- [x] Extend chunker to non-Markdown text
+- [x] Embeddings via `fastembed-rs` (multilingual-e5-small int8, user-defined model files); storage in SQLite with FTS5; vectors are blobs compared in Rust instead of `sqlite-vec` (bge-m3 option not done)
+- [x] Hybrid search + RRF; prompt with sources
 - [ ] Folder watch (`notify`) with content-hash incremental re-index
-- [ ] Evaluation set: 50 questions with expected sources under `crates/rag/tests/eval/`, runnable as a test
+- [~] Evaluation set: 50 questions with expected sources under `crates/rag/tests/eval/`, runnable as a test (10 questions over `samples/knowledge`: words only in `crates/rag/tests/samples.rs`, and with the real model in `crates/rag/tests/semantic.rs`, ignored by default, 10 of 10 found within four excerpts)
 - **Done when**: ≥ 80% answers cite the correct source on the eval set.
 
 ### Phase 5: v1.0 release (2 weeks)
@@ -235,8 +240,9 @@ Estimates assume one developer part-time.
 |---|---|
 | Tauri over Electron | ~15 MB vs ~150 MB app, Rust backend for audio/ML |
 | Local-first, cloud opt-in | Privacy, works offline, no running cost |
+| ONNX Runtime linked statically (binary 18 → 50 MB) | The embedding model needs a runtime, and downloading one per OS on first use adds a second download, checksums for archives and signing questions. Accepted over the 20 MB target; `load-dynamic` stays the way back |
 | One OpenAI-compatible client | OpenAI, OpenCode and most gateways speak it; new providers become config |
-| SQLite + sqlite-vec + FTS5 | Single file per workspace, no server, hybrid search catches names and terms |
+| SQLite + FTS5, vectors as blobs | Single file per workspace, no server, hybrid search catches names and terms. Brute-force cosine over a few thousand chunks takes milliseconds, so no `sqlite-vec` extension is loaded |
 | Keys in OS keychain, calls from Rust only | Keys never reach the webview or disk |
 | Stub crates from day one | Clear boundaries, independent tests, reusable outside the app |
 | Whisper runs with timestamps off | The app only uses text. Timestamps cost decoding steps, and models fine-tuned without them (PhoWhisper) emit stray tokens when asked for them |

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { FilePlus2, FileUp, Trash2 } from "lucide-react";
+import { Check, Download, FilePlus2, FileUp, Trash2 } from "lucide-react";
 import { Button } from "@/components/motion/button";
 import { Card, CardContent } from "@/components/motion/card";
 import { Input } from "@/components/motion/input";
 import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { cn } from "@/lib/utils";
-import { type ImportReport, type KnowledgeKind } from "../tauri";
+import { type ImportReport, type IndexStatus, type KnowledgeKind } from "../tauri";
+import { useEmbeddingModel } from "../useEmbeddingModel";
 import { useKnowledge } from "../useKnowledge";
-import { EmptyState, ErrorNote, Screen } from "./ui";
+import { EmptyState, ErrorNote, Progress, Screen } from "./ui";
 
 /** Formats a document can be written in, instead of imported from a file. */
 type WrittenKind = Extract<KnowledgeKind, "markdown" | "text">;
@@ -27,10 +28,19 @@ const KIND_LABEL: Record<KnowledgeKind, string> = {
   text: "TXT",
 };
 
+const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** What the AI can do with a document: read it, not yet, or never (with the reason in `error`). */
+function readState(status: IndexStatus | undefined): { label: string; tone: string } {
+  if (!status) return { label: "Đang đọc…", tone: "bg-muted text-muted-foreground" };
+  if (status.error) return { label: "Không đọc được", tone: "bg-destructive/10 text-destructive" };
+  return { label: "AI đã đọc", tone: "bg-success/10 text-success" };
 }
 
 function formatDate(ms: number): string | null {
@@ -38,9 +48,10 @@ function formatDate(ms: number): string | null {
   return new Date(ms).toLocaleDateString("vi-VN", { dateStyle: "short" });
 }
 
-/** The user's own documents (JD, CV, rubric...). Stored for the AI to read in a later version. */
+/** The user's own documents (JD, CV, rubric...). The AI reads them to ground its answers. */
 export function Knowledge() {
   const knowledge = useKnowledge();
+  const embedding = useEmbeddingModel();
   const [report, setReport] = useState<ImportReport | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
@@ -116,9 +127,56 @@ export function Knowledge() {
       </div>
 
       <p className="text-xs leading-relaxed text-muted-foreground">
-        AI chưa đọc tài liệu: tính năng này đến ở bản sau. Hiện tại tài liệu chỉ được lưu trên máy
-        bạn.
+        Khi Trợ lý AI bật, đối phương hỏi, app tìm vài đoạn liên quan trong các tài liệu này rồi gửi
+        kèm câu hỏi để gợi ý trả lời dựa trên đó. Việc đọc tệp và tìm đoạn diễn ra ngay trên máy
+        bạn; chỉ các đoạn được chọn mới được gửi đi nếu bạn dùng nhà cung cấp qua mạng.
       </p>
+
+      {embedding.info && (
+        <section
+          aria-label="Tìm theo nghĩa"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3"
+        >
+          <div className="min-w-0 flex-1 basis-72">
+            <h2 className="text-sm font-semibold">Tìm theo nghĩa</h2>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              {embedding.info.installed
+                ? embedding.info.pending_chunks > 0
+                  ? `Đang chuẩn bị tài liệu: còn ${embedding.info.pending_chunks} đoạn.`
+                  : "Đang bật: AI tìm được đoạn liên quan cả khi câu hỏi không dùng đúng từ trong tài liệu, kể cả khác ngôn ngữ."
+                : `Tải một mô hình nhỏ (khoảng ${megabytes(embedding.info.size)} MB, giấy phép ${embedding.info.license}) để AI tìm được đoạn liên quan cả khi câu hỏi không dùng đúng từ trong tài liệu, kể cả khác ngôn ngữ. Mô hình chạy ngay trên máy bạn. Chưa tải thì AI vẫn tìm theo từ.`}
+            </p>
+            {embedding.error && <ErrorNote className="mt-2">{embedding.error}</ErrorNote>}
+          </div>
+          {embedding.progress ? (
+            <div className="flex w-56 flex-col gap-2">
+              <Progress
+                value={embedding.progress.downloaded}
+                max={embedding.progress.total || undefined}
+              />
+              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span>
+                  {megabytes(embedding.progress.downloaded)}
+                  {embedding.progress.total > 0 ? ` / ${megabytes(embedding.progress.total)}` : ""} MB
+                </span>
+                <Button variant="ghost" size="sm" onClick={embedding.cancel}>
+                  Huỷ
+                </Button>
+              </div>
+            </div>
+          ) : embedding.info.installed ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
+              <Check className="size-3.5" />
+              Đã tải
+            </span>
+          ) : (
+            <Button size="sm" onClick={() => void embedding.download()}>
+              <Download className="size-4" />
+              Tải về
+            </Button>
+          )}
+        </section>
+      )}
 
       {knowledge.error && <ErrorNote>{knowledge.error}</ErrorNote>}
 
@@ -228,6 +286,8 @@ export function Knowledge() {
               {knowledge.docs.map((doc) => {
                 const date = formatDate(doc.added_at);
                 const asking = confirming === doc.id;
+                const state = readState(knowledge.index[doc.id]);
+                const failure = knowledge.index[doc.id]?.error;
                 return (
                   <li
                     key={doc.id}
@@ -236,8 +296,23 @@ export function Knowledge() {
                     <span className="min-w-12 shrink-0 rounded-md bg-muted px-2 py-1 text-center text-[10px] font-bold tracking-wider text-muted-foreground">
                       {KIND_LABEL[doc.kind]}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium" title={doc.name}>
-                      {doc.name}
+                    <div className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium" title={doc.name}>
+                        {doc.name}
+                      </span>
+                      {failure && (
+                        <span className="mt-0.5 block text-xs leading-snug text-destructive">
+                          {failure}
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className={cn(
+                        "hidden shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold sm:inline",
+                        state.tone,
+                      )}
+                    >
+                      {state.label}
                     </span>
                     <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
                       {formatSize(doc.size_bytes)}

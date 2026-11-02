@@ -279,13 +279,18 @@ export async function onListeningError(handler: (message: string) => void): Prom
   return listen<ErrorEvent>("error", (event) => handler(event.payload.message));
 }
 
+/** The id the embedding model's `model_progress` events carry. Other ids are the speech model. */
+export const EMBEDDING_MODEL_ID = "multilingual-e5-small";
+
+/** `accept` picks which model's events to follow: every download uses the same event. */
 export async function onModelProgress(
   handler: (downloaded: number, total: number) => void,
+  accept: (modelId: string) => boolean = () => true,
 ): Promise<() => void> {
   if (!inTauri()) return () => {};
-  return listen<ModelProgressEvent>("model_progress", (event) =>
-    handler(event.payload.downloaded, event.payload.total),
-  );
+  return listen<ModelProgressEvent>("model_progress", (event) => {
+    if (accept(event.payload.id)) handler(event.payload.downloaded, event.payload.total);
+  });
 }
 
 export type PlayMode = "content" | "interview";
@@ -393,6 +398,66 @@ export async function createKnowledge(
     return doc;
   }
   return invoke<KnowledgeDoc>("create_knowledge", { title, kind, text });
+}
+
+/** How one document went into the AI's index. A document without an entry is not read yet. */
+export type IndexStatus = {
+  doc_id: string;
+  /** Pieces of text stored. Zero when the document could not be read. */
+  chunks: number;
+  /** Why it could not be read, in words for the user. */
+  error: string | null;
+};
+
+/** The state of every document that has been looked at. */
+export async function knowledgeIndexStatus(): Promise<IndexStatus[]> {
+  if (!inTauri()) {
+    return browserDocs.map((d, i) => ({
+      doc_id: d.id,
+      chunks: i === 1 ? 0 : 6 + i,
+      error: i === 1 ? "Tệp không có chữ để đọc. Nếu là PDF quét từ ảnh thì cần một bản có chữ." : null,
+    }));
+  }
+  return invoke<IndexStatus[]>("knowledge_index_status");
+}
+
+/** Called after a document was read into the index, or could not be. */
+export async function onKnowledgeIndexed(handler: () => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return listen("knowledge_indexed", () => handler());
+}
+
+/** The model that lets the AI find paragraphs by meaning instead of by exact words. */
+export type EmbeddingInfo = {
+  installed: boolean;
+  /** Bytes to download in all. */
+  size: number;
+  license: string;
+  license_url: string | null;
+  /** Paragraphs still waiting to be made searchable by meaning. */
+  pending_chunks: number;
+};
+
+export async function embeddingModelInfo(): Promise<EmbeddingInfo | null> {
+  if (!inTauri()) {
+    return { installed: false, size: 135_143_000, license: "MIT", license_url: null, pending_chunks: 0 };
+  }
+  try {
+    return await invoke<EmbeddingInfo>("embedding_model_info");
+  } catch {
+    return null;
+  }
+}
+
+/** Resolves when every file is complete and verified. Progress arrives through `onModelProgress`. */
+export async function downloadEmbeddingModel(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("download_embedding_model");
+}
+
+export async function cancelEmbeddingDownload(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("cancel_embedding_download");
 }
 
 export async function deleteKnowledge(id: string): Promise<void> {
@@ -551,7 +616,8 @@ export async function onAnswerToken(handler: (token: string) => void): Promise<(
   return listen<AnswerTokenEvent>("answer_token", (event) => handler(event.payload.token));
 }
 
-export async function onAnswerDone(handler: () => void): Promise<() => void> {
+/** `sources` names the documents the answer was written from, best first. */
+export async function onAnswerDone(handler: (sources: string[]) => void): Promise<() => void> {
   if (!inTauri()) return () => {};
-  return listen<AnswerDoneEvent>("answer_done", () => handler());
+  return listen<AnswerDoneEvent>("answer_done", (event) => handler(event.payload.sources ?? []));
 }

@@ -169,7 +169,8 @@ impl KnowledgeStore {
             .join(format!("{}.{}", doc.id, doc.kind.extension()))
     }
 
-    fn get(&self, id: &str) -> Result<KnowledgeDoc> {
+    /// One document by id, or `NotFound`.
+    pub fn get(&self, id: &str) -> Result<KnowledgeDoc> {
         self.db
             .lock()?
             .query_row(

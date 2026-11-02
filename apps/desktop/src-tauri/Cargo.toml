@@ -22,6 +22,8 @@ offstage-core.workspace = true
 offstage-audio = { path = "../../../crates/audio" }
 offstage-llm = { path = "../../../crates/llm" }
 offstage-models = { path = "../../../crates/models" }
+offstage-embed = { path = "../../../crates/embed", features = ["onnx"] }
+offstage-rag = { path = "../../../crates/rag" }
 offstage-pipeline = { path = "../../../crates/pipeline" }
 # whisper.cpp is built from source, so the build needs cmake and a C++ toolchain.
 offstage-stt = { path = "../../../crates/stt", features = ["whisper"] }

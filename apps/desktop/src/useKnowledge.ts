@@ -4,8 +4,11 @@ import {
   deleteKnowledge,
   errorMessage,
   importKnowledge,
+  knowledgeIndexStatus,
   listKnowledge,
+  onKnowledgeIndexed,
   type ImportReport,
+  type IndexStatus,
   type KnowledgeDoc,
 } from "./tauri";
 
@@ -15,6 +18,8 @@ import {
  */
 export function useKnowledge() {
   const [docs, setDocs] = useState<KnowledgeDoc[]>([]);
+  /** By document id. A document missing here is still being read. */
+  const [index, setIndex] = useState<Record<string, IndexStatus>>({});
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const busy = useRef(false);
@@ -42,6 +47,29 @@ export function useKnowledge() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Rust reads each document into the AI's index in the background and says when one is done.
+  useEffect(() => {
+    let cancelled = false;
+    let off: (() => void) | undefined;
+    const load = async () => {
+      try {
+        const statuses = await knowledgeIndexStatus();
+        if (!cancelled) setIndex(Object.fromEntries(statuses.map((s) => [s.doc_id, s])));
+      } catch {
+        // Without the statuses the screen only shows no state, which is not worth an error banner.
+      }
+    };
+    void load();
+    void onKnowledgeIndexed(() => void load()).then((unlisten) => {
+      if (cancelled) unlisten();
+      else off = unlisten;
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
 
   /**
    * Opens the file picker and stores what was picked. Resolves to the report, which lists
@@ -83,5 +111,5 @@ export function useKnowledge() {
 
   const clearError = useCallback(() => setError(null), []);
 
-  return { docs, error, importing, clearError, refresh, importFiles, create, remove };
+  return { docs, index, error, importing, clearError, refresh, importFiles, create, remove };
 }

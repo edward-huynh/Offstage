@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  EMBEDDING_MODEL_ID,
   cancelDownload,
   deniedPermission,
   downloadModel,
@@ -79,7 +80,13 @@ export function useListening(panelOpen: boolean) {
       }),
     );
     keep(onListeningError((message) => setError(friendlyError(message))));
-    keep(onModelProgress((downloaded, total) => setProgress({ downloaded, total })));
+    // The embedding model downloads through the same event, and is not the speech model.
+    keep(
+      onModelProgress(
+        (downloaded, total) => setProgress({ downloaded, total }),
+        (id) => id !== EMBEDDING_MODEL_ID,
+      ),
+    );
     void modelInfo().then(setModel);
 
     return () => {

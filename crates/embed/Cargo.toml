@@ -1,0 +1,15 @@
+[package]
+name = "offstage-embed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Text embeddings for retrieval: a trait, and multilingual-e5 on ONNX Runtime behind a feature"
+
+[dependencies]
+thiserror.workspace = true
+fastembed = { version = "7.5.0", default-features = false, features = ["onnx", "ort-download-binaries-rustls-tls"], optional = true }
+
+# `onnx` pulls in ONNX Runtime (a prebuilt library downloaded at build time). It is off by
+# default so `cargo test --workspace` stays light, like `whisper` in `offstage-stt`.
+[features]
+onnx = ["dep:fastembed"]

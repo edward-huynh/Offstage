@@ -49,6 +49,9 @@ export const AnswerPanel = memo(function AnswerPanel({ answer, status, captionsO
               <li key={i}>{line}</li>
             ))}
           </ul>
+          {answer.phase === "done" && answer.sources.length > 0 && (
+            <p className="sources">Từ tài liệu: {answer.sources.join(" · ")}</p>
+          )}
           {answer.phase === "streaming" && lines.length === 0 && <p>Đang nghĩ…</p>}
           {answer.phase === "failed" && (
             <p className="failed">Không tạo được câu trả lời. Xem lý do ở phụ đề (phím T).</p>

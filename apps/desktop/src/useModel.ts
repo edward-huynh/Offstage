@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  EMBEDDING_MODEL_ID,
   cancelDownload,
   downloadModel,
   errorMessage,
@@ -22,7 +23,11 @@ export function useModel() {
     void modelInfo().then((i) => {
       if (!cancelled) setInfo(i);
     });
-    void onModelProgress((downloaded, total) => setProgress({ downloaded, total })).then((off) => {
+    // The embedding model downloads through the same event, and is not this model.
+    void onModelProgress(
+      (downloaded, total) => setProgress({ downloaded, total }),
+      (id) => id !== EMBEDDING_MODEL_ID,
+    ).then((off) => {
       if (cancelled) off();
       else unlisten = off;
     });

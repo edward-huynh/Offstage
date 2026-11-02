@@ -9,20 +9,28 @@
 use std::sync::{Arc, Mutex};
 
 use offstage_core::{question::is_question, AppEvent, Speaker};
+use offstage_embed::{onnx::E5Embedder, TextEmbedder};
 use offstage_llm::{
     config::{self, AssistantConfig},
     history::History,
     openai_compat::{endpoint_is_local, OpenAiCompat},
-    prompt::{build_messages, Turn},
+    prompt::{build_messages_with_documents, Excerpt, Turn},
     secrets, LlmError, LlmProvider,
 };
+use offstage_rag::{ChunkStore, SearchHit, SemanticQuery};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
 
-use crate::{listening::emit, storage};
+use crate::{embedding, listening::emit, rag::Rag, storage};
 
 const CONFIG_KEY: &str = "assistant_config";
+
+/// Most excerpts of the user's documents sent with a question.
+const EXCERPTS: usize = 4;
+/// Most characters of excerpts in all, about 1,000 tokens. More makes the first token slower
+/// (`docs/LLM-BENCH.md`) without making the short answer better.
+const EXCERPT_CHARS: usize = 4_000;
 
 #[derive(Default)]
 pub struct Assistant {
@@ -66,6 +74,11 @@ fn provider(app: &AppHandle) -> Result<Arc<OpenAiCompat>, String> {
     let built = Arc::new(OpenAiCompat::new(chosen, key).map_err(|e| e.to_string())?);
     with_state(app, |state| state.provider = Some(Arc::clone(&built)));
     Ok(built)
+}
+
+/// Whether the assistant is turned on, so the app knows to keep what it needs ready.
+pub fn is_enabled(app: &AppHandle) -> bool {
+    load_config(app).is_ok_and(|config| config.enabled)
 }
 
 /// Forgets the cached provider after the choice or a key changed.
@@ -134,9 +147,18 @@ fn answer(app: &AppHandle, question: String, language: Option<String>, history: 
         },
     );
 
-    let messages = build_messages(&question, &history, language.as_deref());
+    let index = app.try_state::<Rag>().map(|rag| rag.0.clone());
+    let embedder = embedding::current(app);
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let excerpts = retrieve(index, embedder, question.clone()).await;
+        // A newer question can arrive while the documents are searched.
+        if cancel.is_cancelled() {
+            return;
+        }
+        let messages =
+            build_messages_with_documents(&question, &history, language.as_deref(), &excerpts);
+        let sources = sources_of(&excerpts);
         let mut on_token = {
             let app = app.clone();
             let cancel = cancel.clone();
@@ -157,12 +179,7 @@ fn answer(app: &AppHandle, question: String, language: Option<String>, history: 
             .await
         {
             Ok(_) if cancel.is_cancelled() => {}
-            Ok(_) => emit(
-                &app,
-                &AppEvent::AnswerDone {
-                    sources: Vec::new(),
-                },
-            ),
+            Ok(_) => emit(&app, &AppEvent::AnswerDone { sources }),
             Err(LlmError::Cancelled) => {}
             Err(e) => emit(
                 &app,
@@ -172,6 +189,65 @@ fn answer(app: &AppHandle, question: String, language: Option<String>, history: 
             ),
         }
     });
+}
+
+/// The excerpts of the user's documents that bear on `question`, best first. Empty when there
+/// are no documents, nothing relevant, or the search failed: the answer is then given without
+/// them, because a broken index must not silence the assistant.
+async fn retrieve(
+    index: Option<ChunkStore>,
+    embedder: Option<Arc<E5Embedder>>,
+    question: String,
+) -> Vec<Excerpt> {
+    let Some(index) = index else {
+        return Vec::new();
+    };
+    let found = tauri::async_runtime::spawn_blocking(move || {
+        // The question as a vector, when the model is loaded. If it fails the search still has
+        // the words.
+        let vector = embedder.and_then(|e| match e.embed_query(&question) {
+            Ok(vector) => Some(vector),
+            Err(e) => {
+                eprintln!("question not embedded: {e}");
+                None
+            }
+        });
+        let semantic = vector.as_deref().map(|vector| SemanticQuery {
+            model: embedding::MODEL_ID,
+            vector,
+        });
+        index.search_with(&question, semantic.as_ref(), EXCERPTS, EXCERPT_CHARS)
+    })
+    .await;
+    match found {
+        Ok(Ok(hits)) => excerpts_of(hits),
+        Ok(Err(e)) => {
+            eprintln!("documents not searched: {e}");
+            Vec::new()
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+fn excerpts_of(hits: Vec<SearchHit>) -> Vec<Excerpt> {
+    hits.into_iter()
+        .map(|hit| Excerpt {
+            source: hit.chunk.doc,
+            section: hit.chunk.section,
+            text: hit.chunk.content,
+        })
+        .collect()
+}
+
+/// What is shown under the answer: each document and section used, once, best first.
+fn sources_of(excerpts: &[Excerpt]) -> Vec<String> {
+    let mut sources: Vec<String> = Vec::new();
+    for label in excerpts.iter().map(Excerpt::label) {
+        if !sources.contains(&label) {
+            sources.push(label);
+        }
+    }
+    sources
 }
 
 /// What the UI needs to show whether the assistant will answer.
@@ -312,6 +388,44 @@ mod tests {
             model: model.map(str::to_owned),
             custom_base_url: None,
         }
+    }
+
+    fn hit(doc: &str, section: Option<&str>, content: &str) -> SearchHit {
+        SearchHit {
+            chunk: offstage_rag::Chunk {
+                doc: doc.into(),
+                section: section.map(Into::into),
+                content: content.into(),
+            },
+            score: 1.0,
+        }
+    }
+
+    #[test]
+    fn hits_become_excerpts_in_the_same_order() {
+        let excerpts = excerpts_of(vec![
+            hit("CV.pdf", Some("Kinh nghiệm"), "Ba năm Rust."),
+            hit("JD.md", None, "Cần Tauri."),
+        ]);
+        assert_eq!(excerpts.len(), 2);
+        assert_eq!(excerpts[0].source, "CV.pdf");
+        assert_eq!(excerpts[0].section.as_deref(), Some("Kinh nghiệm"));
+        assert_eq!(excerpts[1].text, "Cần Tauri.");
+    }
+
+    #[test]
+    fn sources_name_each_document_and_section_once() {
+        let excerpts = excerpts_of(vec![
+            hit("CV.pdf", Some("Kinh nghiệm"), "a"),
+            hit("CV.pdf", Some("Kinh nghiệm"), "b"),
+            hit("CV.pdf", Some("Học vấn"), "c"),
+            hit("JD.md", None, "d"),
+        ]);
+        assert_eq!(
+            sources_of(&excerpts),
+            ["CV.pdf › Kinh nghiệm", "CV.pdf › Học vấn", "JD.md"]
+        );
+        assert!(sources_of(&[]).is_empty());
     }
 
     #[test]

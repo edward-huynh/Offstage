@@ -43,6 +43,46 @@ const MIGRATIONS: &[&str] = &[
          key   TEXT PRIMARY KEY NOT NULL,
          value TEXT NOT NULL
      );",
+    // 2: the text of knowledge documents, cut into chunks and searchable (`offstage-rag`).
+    // The full-text table keeps no copy of the text: it reads `chunks`, and the triggers keep
+    // it in step. Deleting a document removes its chunks, and that removes their index entries.
+    // `remove_diacritics 0` keeps Vietnamese accents apart (ma, má, mà are different words).
+    "CREATE TABLE doc_index (
+         doc_id     TEXT PRIMARY KEY NOT NULL REFERENCES knowledge (id) ON DELETE CASCADE,
+         chunks     INTEGER NOT NULL,
+         error      TEXT,
+         indexed_at INTEGER NOT NULL
+     );
+     CREATE TABLE chunks (
+         id      INTEGER PRIMARY KEY,
+         doc_id  TEXT NOT NULL REFERENCES knowledge (id) ON DELETE CASCADE,
+         ord     INTEGER NOT NULL,
+         section TEXT,
+         content TEXT NOT NULL
+     );
+     CREATE INDEX chunks_doc ON chunks (doc_id, ord);
+     CREATE VIRTUAL TABLE chunks_fts USING fts5(
+         content, section,
+         content = 'chunks', content_rowid = 'id',
+         tokenize = 'unicode61 remove_diacritics 0'
+     );
+     CREATE TRIGGER chunks_after_insert AFTER INSERT ON chunks BEGIN
+         INSERT INTO chunks_fts (rowid, content, section)
+         VALUES (new.id, new.content, new.section);
+     END;
+     CREATE TRIGGER chunks_after_delete AFTER DELETE ON chunks BEGIN
+         INSERT INTO chunks_fts (chunks_fts, rowid, content, section)
+         VALUES ('delete', old.id, old.content, old.section);
+     END;",
+    // 3: one embedding vector per chunk, a little-endian f32 array. `model` says which model made
+    // it: vectors of another model are not comparable, so they are ignored and made again. Search
+    // compares them in code (a few thousand chunks is milliseconds), so no vector extension is
+    // loaded. Replacing a document's chunks removes their vectors.
+    "CREATE TABLE chunk_vectors (
+         chunk_id INTEGER PRIMARY KEY REFERENCES chunks (id) ON DELETE CASCADE,
+         model    TEXT NOT NULL,
+         vec      BLOB NOT NULL
+     );",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -97,7 +137,9 @@ impl Db {
         })
     }
 
-    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, Connection>> {
+    /// The connection, for the stores built on this database in other crates. Hold it only for
+    /// the statements themselves: it is shared, so slow work (reading a file) goes outside.
+    pub fn lock(&self) -> Result<MutexGuard<'_, Connection>> {
         self.conn.lock().map_err(|_| DbError::Poisoned)
     }
 
@@ -221,7 +263,7 @@ mod tests {
             Db::open(dir.path()),
             Err(DbError::TooNew {
                 found: 99,
-                supported: 1
+                supported: 3
             })
         ));
     }

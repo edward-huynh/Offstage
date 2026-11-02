@@ -180,5 +180,6 @@ html[data-view="overlay"] body { overflow: hidden; }
 .assist p { margin: 4px 0 0; }
 .assist .asked { color: #7cc4f0; font-size: 12px; }
 .assist .failed { color: var(--cue); }
+.assist .sources { font-size: 11px; color: var(--ink-dim); }
 .assist ul { margin: 6px 0 0; padding-left: 18px; color: var(--ink); font-size: 16px; line-height: 1.4; }
 .assist li { margin: 0 0 4px; }

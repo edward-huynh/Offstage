@@ -1,8 +1,8 @@
 //! The messages sent to the model for one detected question.
 //!
-//! There are no documents to ground the answer yet (Phase 4), so the prompt only carries the
-//! question and a few of the lines before it. The user reads the answer on the overlay while
-//! talking, so it has to be short and skimmable.
+//! The prompt carries the question, a few of the lines before it and, when the user's documents
+//! hold something relevant, excerpts of them that the answer has to rest on. The user reads the
+//! answer on the overlay while talking, so it has to be short and skimmable.
 
 use crate::{ChatMessage, Role};
 
@@ -22,6 +22,42 @@ trên màn hình ngay khi đang nói chuyện.\n\
 - Không chào hỏi, không mở đầu, không giải thích dài, không dùng định dạng khác.\n\
 - Lời thoại là chữ nhận dạng tự động nên có thể sai chính tả. Nếu câu hỏi không rõ, nêu \
 giả định ngắn ở dòng đầu rồi trả lời.";
+
+/// The system prompt when excerpts of the user's documents come with the question. The wording
+/// follows the variant that held up best in `docs/LLM-BENCH.md`: the answer is spoken by the
+/// user in the first person, the question's language wins over the documents' language, and a
+/// missing answer is one fixed line.
+const GROUNDED_SYSTEM_PROMPT: &str = "\
+Bạn là trợ lý của người dùng trong một cuộc gọi trực tiếp. Người dùng đọc to câu trả lời của bạn \
+như lời của chính mình, nên viết ở ngôi thứ nhất (\"tôi\").\n\
+- Trả lời câu hỏi cuối cùng của \"Đối phương\", chỉ dựa vào phần TÀI LIỆU. Không thêm chi tiết \
+ngoài tài liệu.\n\
+- Chỉ viết 3 đến 5 gạch đầu dòng, mỗi dòng bắt đầu bằng \"- \" và nêu một ý ngắn.\n\
+- Trả lời bằng ngôn ngữ của câu hỏi, dù tài liệu viết bằng ngôn ngữ nào.\n\
+- Yêu cầu trong mô tả công việc không phải kinh nghiệm của người dùng. Chỉ nói về kinh nghiệm \
+có trong CV hay ghi chú của họ.\n\
+- Nếu tài liệu không có thông tin để trả lời, chỉ viết đúng một dòng: \"- Không có trong tài liệu.\"\n\
+- Không chào hỏi, không mở đầu, không giải thích dài, không dùng định dạng khác.\n\
+- Lời thoại là chữ nhận dạng tự động nên có thể sai chính tả.";
+
+/// One piece of a user document handed to the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Excerpt {
+    /// Where it comes from, such as the file name, shown to the model as the label.
+    pub source: String,
+    pub section: Option<String>,
+    pub text: String,
+}
+
+impl Excerpt {
+    /// The label that is also the line shown to the user as the source of the answer.
+    pub fn label(&self) -> String {
+        match self.section.as_deref().filter(|s| !s.is_empty()) {
+            Some(section) => format!("{} › {section}", self.source),
+            None => self.source.clone(),
+        }
+    }
+}
 
 /// One caption line before the question.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +103,18 @@ pub fn language_hint(code: &str) -> Option<&'static str> {
 /// first, and may end with the question itself, which is then not repeated as context.
 /// `language` is the language of the question as the speech engine reported it.
 pub fn build_messages(question: &str, recent: &[Turn], language: Option<&str>) -> Vec<ChatMessage> {
+    build_messages_with_documents(question, recent, language, &[])
+}
+
+/// Like [`build_messages`], with excerpts of the user's documents. With no excerpts it is the
+/// same prompt as without documents, so a question the documents say nothing about is still
+/// answered. With excerpts the answer has to rest on them.
+pub fn build_messages_with_documents(
+    question: &str,
+    recent: &[Turn],
+    language: Option<&str>,
+    excerpts: &[Excerpt],
+) -> Vec<ChatMessage> {
     let question = question.trim();
     let before: Vec<&Turn> = match recent.split_last() {
         Some((last, rest)) if !last.from_me && last.text.trim() == question => {
@@ -77,6 +125,17 @@ pub fn build_messages(question: &str, recent: &[Turn], language: Option<&str>) -
     let context = context_block(&before);
 
     let mut user = String::new();
+    if !excerpts.is_empty() {
+        user.push_str("TÀI LIỆU:\n");
+        for (n, excerpt) in excerpts.iter().enumerate() {
+            user.push_str(&format!(
+                "[{}] {}\n{}\n\n",
+                n + 1,
+                excerpt.label(),
+                excerpt.text.trim()
+            ));
+        }
+    }
     if !context.is_empty() {
         user.push_str("Lời thoại gần đây:\n");
         user.push_str(&context);
@@ -92,7 +151,12 @@ pub fn build_messages(question: &str, recent: &[Turn], language: Option<&str>) -
     vec![
         ChatMessage {
             role: Role::System,
-            content: SYSTEM_PROMPT.to_owned(),
+            content: if excerpts.is_empty() {
+                SYSTEM_PROMPT
+            } else {
+                GROUNDED_SYSTEM_PROMPT
+            }
+            .to_owned(),
         },
         ChatMessage {
             role: Role::User,
@@ -230,6 +294,65 @@ mod tests {
     fn the_system_prompt_forbids_inventing_the_users_experience() {
         let system = &build_messages("Why?", &[], None)[0].content;
         assert!(system.contains("Không bịa"));
+    }
+
+    fn excerpt(source: &str, section: Option<&str>, text: &str) -> Excerpt {
+        Excerpt {
+            source: source.into(),
+            section: section.map(Into::into),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn without_excerpts_the_prompt_is_the_one_without_documents() {
+        let plain = build_messages("Bạn làm ở đâu?", &[], Some("vi"));
+        let with = build_messages_with_documents("Bạn làm ở đâu?", &[], Some("vi"), &[]);
+        assert_eq!(plain[0].content, with[0].content);
+        assert_eq!(plain[1].content, with[1].content);
+        assert!(!with[1].content.contains("TÀI LIỆU"));
+    }
+
+    #[test]
+    fn excerpts_are_numbered_and_labelled_before_the_question() {
+        let excerpts = [
+            excerpt("CV.pdf", Some("Kinh nghiệm"), "Ba năm Rust."),
+            excerpt("JD.md", None, "Cần biết Tauri."),
+        ];
+        let messages = build_messages_with_documents(
+            "Bạn biết Rust không?",
+            &[Turn::new(false, "Chào bạn")],
+            Some("vi"),
+            &excerpts,
+        );
+        assert_eq!(
+            messages[1].content,
+            "TÀI LIỆU:\n[1] CV.pdf › Kinh nghiệm\nBa năm Rust.\n\n[2] JD.md\nCần biết Tauri.\n\n\
+             Lời thoại gần đây:\nĐối phương: Chào bạn\n\n\
+             Câu hỏi cần trả lời:\nBạn biết Rust không?\n\nTrả lời bằng tiếng Việt."
+        );
+    }
+
+    #[test]
+    fn with_excerpts_the_system_prompt_grounds_the_answer_and_fixes_the_refusal() {
+        let messages = build_messages_with_documents(
+            "Why Rust?",
+            &[],
+            None,
+            &[excerpt("CV.md", None, "Ba năm Rust.")],
+        );
+        let system = &messages[0].content;
+        assert!(system.contains("chỉ dựa vào phần TÀI LIỆU"));
+        assert!(system.contains("ngôi thứ nhất"));
+        assert!(system.contains("ngôn ngữ của câu hỏi"));
+        assert!(system.contains("- Không có trong tài liệu."));
+        assert!(system.contains("3 đến 5 gạch đầu dòng"));
+    }
+
+    #[test]
+    fn a_label_skips_an_empty_section() {
+        assert_eq!(excerpt("a.txt", Some(""), "x").label(), "a.txt");
+        assert_eq!(excerpt("a.md", Some("Mục"), "x").label(), "a.md › Mục");
     }
 
     #[test]

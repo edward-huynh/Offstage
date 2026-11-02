@@ -17,9 +17,15 @@ import {
 } from "./tauri";
 
 export type AnswerPhase = "idle" | "streaming" | "done" | "failed";
-export type Answer = { question: string; text: string; phase: AnswerPhase };
+export type Answer = {
+  question: string;
+  text: string;
+  phase: AnswerPhase;
+  /** Documents the answer was written from, known once it is done. */
+  sources: string[];
+};
 
-const NO_ANSWER: Answer = { question: "", text: "", phase: "idle" };
+const NO_ANSWER: Answer = { question: "", text: "", phase: "idle", sources: [] };
 
 /**
  * The status of the assistant, read again whenever `refreshKey` changes. Settings are edited in
@@ -70,7 +76,7 @@ export function useAnswer(refreshKey?: unknown) {
     keep(
       onQuestionDetected((question) => {
         pending = "";
-        setAnswer({ question, text: "", phase: "streaming" });
+        setAnswer({ question, text: "", phase: "streaming", sources: [] });
       }),
     );
     keep(
@@ -80,11 +86,11 @@ export function useAnswer(refreshKey?: unknown) {
       }),
     );
     keep(
-      onAnswerDone(() => {
+      onAnswerDone((sources) => {
         if (frame !== undefined) cancelAnimationFrame(frame);
         const rest = pending;
         pending = "";
-        setAnswer((a) => ({ ...a, text: a.text + rest, phase: "done" }));
+        setAnswer((a) => ({ ...a, text: a.text + rest, phase: "done", sources }));
       }),
     );
     // Any pipeline error while an answer is being written ends it, so the panel never waits forever.

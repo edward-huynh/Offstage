@@ -9,6 +9,6 @@ mod spec;
 
 pub use download::{Downloader, Progress, ProgressSink};
 pub use error::ModelError;
-pub use presets::{all as presets, find as find_preset, whisper_small_q5};
+pub use presets::{all as presets, find as find_preset, multilingual_e5_small, whisper_small_q5};
 pub use spec::ModelSpec;
 pub use tokio_util::sync::CancellationToken;

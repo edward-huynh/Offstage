@@ -5,5 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+offstage-core = { version = "0.1.0", path = "../core" }
+offstage-embed = { path = "../embed" }
+pdf-extract = "0.12.1"
+quick-xml = "0.42.0"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde.workspace = true
 thiserror.workspace = true
+zip = { version = "9.2.1", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+offstage-embed = { path = "../embed", features = ["onnx"] }

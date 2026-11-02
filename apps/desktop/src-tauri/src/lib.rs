@@ -21,10 +21,12 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 mod assistant;
+mod embedding;
 mod knowledge;
 mod listening;
 mod permissions;
 mod play;
+mod rag;
 mod settings;
 mod storage;
 
@@ -457,10 +459,14 @@ pub fn run() {
                 Err(e) => eprintln!("old scripts not imported: {e}"),
             }
             app.manage(Scripts(Arc::new(Mutex::new(script_store))));
+            app.manage(rag::Rag(offstage_rag::ChunkStore::new(db.clone())));
             app.manage(knowledge::Knowledge(Arc::new(Mutex::new(
                 KnowledgeStore::new(db, data_dir.join("knowledge")),
             ))));
+            rag::index_missing(app.handle());
+            embedding::embed_pending_in_background(app.handle());
             app.manage(listening::Listening::default());
+            app.manage(embedding::Embedding::default());
             app.manage(assistant::Assistant::default());
             app.manage(play::Play::default());
             seed_sample_script(app.handle(), &app.state::<Scripts>());
@@ -559,6 +565,10 @@ pub fn run() {
             knowledge::import_knowledge,
             knowledge::create_knowledge,
             knowledge::delete_knowledge,
+            rag::knowledge_index_status,
+            embedding::embedding_model_info,
+            embedding::download_embedding_model,
+            embedding::cancel_embedding_download,
             assistant::assistant_get_config,
             assistant::assistant_set_config,
             assistant::assistant_status,
