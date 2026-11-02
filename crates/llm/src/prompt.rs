@@ -36,6 +36,8 @@ ngoài tài liệu.\n\
 - Trả lời bằng ngôn ngữ của câu hỏi, dù tài liệu viết bằng ngôn ngữ nào.\n\
 - Yêu cầu trong mô tả công việc không phải kinh nghiệm của người dùng. Chỉ nói về kinh nghiệm \
 có trong CV hay ghi chú của họ.\n\
+- Tên riêng (trường, công ty, địa danh, sản phẩm, công nghệ) viết đúng như trong TÀI LIỆU, giữ \
+nguyên tiếng Việt, không dịch, không đoán và không đổi sang tên khác.\n\
 - Nếu tài liệu không có thông tin để trả lời, chỉ viết đúng một dòng: \"- Không có trong tài liệu.\"\n\
 - Không chào hỏi, không mở đầu, không giải thích dài, không dùng định dạng khác.\n\
 - Lời thoại là chữ nhận dạng tự động nên có thể sai chính tả.";
@@ -99,6 +101,13 @@ pub fn language_hint(code: &str) -> Option<&'static str> {
     }
 }
 
+/// Added to the English language line when the answer comes from documents. Told only to "answer
+/// in English", Qwen3 4B translated a Vietnamese CV's "Đại học Bách khoa Hà Nội" into an invented
+/// "University of Science, Ho Chi Minh City"; with this sentence it copies the name as written
+/// (measured, `crates/llm/tests/local_real.rs`).
+const KEEP_NAMES: &str =
+    " Keep names of schools, companies and places exactly as written in the documents.";
+
 /// Builds the conversation for `question`. `recent` is the caption history in order, oldest
 /// first, and may end with the question itself, which is then not repeated as context.
 /// `language` is the language of the question as the speech engine reported it.
@@ -146,6 +155,9 @@ pub fn build_messages_with_documents(
     if let Some(hint) = language.and_then(language_hint) {
         user.push_str("\n\n");
         user.push_str(hint);
+        if !excerpts.is_empty() && hint.starts_with("Answer in English") {
+            user.push_str(KEEP_NAMES);
+        }
     }
 
     vec![
@@ -347,6 +359,22 @@ mod tests {
         assert!(system.contains("ngôn ngữ của câu hỏi"));
         assert!(system.contains("- Không có trong tài liệu."));
         assert!(system.contains("3 đến 5 gạch đầu dòng"));
+        assert!(system.contains("Tên riêng"));
+    }
+
+    #[test]
+    fn an_english_answer_from_documents_is_told_to_keep_names_as_written() {
+        let excerpts = [excerpt("cv.pdf", None, "Đại học Bách khoa Hà Nội")];
+        let with =
+            build_messages_with_documents("Where did you study?", &[], Some("en"), &excerpts);
+        assert!(with[1]
+            .content
+            .ends_with("Answer in English. Keep names of schools, companies and places exactly as written in the documents."));
+        // Not without documents, and not for a Vietnamese answer.
+        let without = build_messages_with_documents("Where did you study?", &[], Some("en"), &[]);
+        assert!(without[1].content.ends_with("Answer in English."));
+        let vi = build_messages_with_documents("Bạn học ở đâu?", &[], Some("vi"), &excerpts);
+        assert!(vi[1].content.ends_with("Trả lời bằng tiếng Việt."));
     }
 
     #[test]

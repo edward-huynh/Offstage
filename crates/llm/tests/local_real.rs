@@ -121,3 +121,45 @@ impl ChatText for LocalLlm {
         .unwrap()
     }
 }
+
+/// What the assistant now sends for "Where did you study?" against a short Vietnamese CV: search
+/// finds nothing (no shared word, cosine no better than an unrelated question), so the whole CV
+/// goes with the question.
+#[tokio::test]
+#[ignore = "needs the sidecar and a model"]
+async fn an_english_question_is_answered_from_a_whole_short_vietnamese_cv() {
+    let (host, model) = paths();
+    let llm = Arc::new(LocalLlm::start(&host, &model, true, Duration::from_secs(120)).unwrap());
+    let part = |section: &str, text: &str| Excerpt {
+        source: "cv.pdf".into(),
+        section: Some(section.into()),
+        text: text.into(),
+    };
+    let cv = [
+        part(
+            "Kinh nghiệm",
+            "Công ty Âm Sắc, 2022 đến nay: xây dựng ứng dụng desktop bằng Rust và Tauri.",
+        ),
+        part(
+            "Học vấn",
+            "Cử nhân Công nghệ thông tin, Đại học Bách khoa Hà Nội, tốt nghiệp năm 2020.",
+        ),
+        part(
+            "Sở thích",
+            "Chạy bộ vào buổi sáng, đọc sách và nấu ăn vào cuối tuần.",
+        ),
+    ];
+    let messages = build_messages_with_documents("Where did you study?", &[], Some("en"), &cv);
+    let started = Instant::now();
+    let text = llm
+        .chat(&messages, 120, &mut |_: &str| {}, &CancellationToken::new())
+        .await
+        .unwrap();
+    eprintln!("{:?}\n{text}", started.elapsed());
+    let lower = text.to_lowercase();
+    assert!(!lower.contains("không có trong tài liệu"), "{text}");
+    assert!(
+        lower.contains("bách khoa") || lower.contains("bach khoa") || lower.contains("hanoi"),
+        "{text}"
+    );
+}

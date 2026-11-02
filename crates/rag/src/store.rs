@@ -158,6 +158,42 @@ impl ChunkStore {
         Ok(Statistics { rare, pair_weight })
     }
 
+    /// Every chunk, in the order the documents were added and then in document order, when the
+    /// documents together hold at most `max_chars` characters. `None` when there are no documents
+    /// or more text than that.
+    ///
+    /// For a few short documents (a CV and a job description) searching for the right paragraph
+    /// is the wrong tool: a question like "where did you study?" shares no word with a Vietnamese
+    /// CV and scores no higher against it than an unrelated question does. Sending all of it is
+    /// cheap, and the model decides what is relevant.
+    pub fn everything_if_small(&self, max_chars: usize) -> Result<Option<Vec<SearchHit>>> {
+        let conn = self.db.lock()?;
+        let total: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM chunks",
+            [],
+            |row| row.get(0),
+        )?;
+        if total == 0 || usize::try_from(total).map_or(true, |total| total > max_chars) {
+            return Ok(None);
+        }
+        let mut stmt = conn.prepare(
+            "SELECT k.name, c.section, c.content
+             FROM chunks c JOIN knowledge k ON k.id = c.doc_id
+             ORDER BY k.added_at, k.id, c.ord",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(SearchHit {
+                chunk: Chunk {
+                    doc: row.get(0)?,
+                    section: row.get(1)?,
+                    content: row.get(2)?,
+                },
+                score: 0.0,
+            })
+        })?;
+        Ok(Some(rows.collect::<std::result::Result<_, _>>()?))
+    }
+
     /// The chunks that best answer `question` by its words alone. See [`ChunkStore::search_with`].
     pub fn search(&self, question: &str, limit: usize, max_chars: usize) -> Result<Vec<SearchHit>> {
         self.search_with(question, None, limit, max_chars)
@@ -540,6 +576,48 @@ mod tests {
         s.record_failure("d1", "hỏng").unwrap();
         assert!(s.search("alpha", 4, 4000).unwrap().is_empty());
         assert!(!s.has_chunks().unwrap());
+    }
+
+    #[test]
+    fn a_small_set_of_documents_can_be_taken_whole_in_order() {
+        let s = store_with(&[("d1", "CV.md"), ("d2", "JD.md")]);
+        s.replace(
+            "d1",
+            &[
+                chunk("CV.md", Some("Học vấn"), "Đại học Bách khoa"),
+                chunk("CV.md", Some("Kinh nghiệm"), "Ba năm Rust"),
+            ],
+        )
+        .unwrap();
+        s.replace("d2", &[chunk("JD.md", None, "Cần Tauri")])
+            .unwrap();
+        let all = s.everything_if_small(1000).unwrap().unwrap();
+        let texts: Vec<_> = all.iter().map(|h| h.chunk.content.as_str()).collect();
+        assert_eq!(texts, ["Đại học Bách khoa", "Ba năm Rust", "Cần Tauri"]);
+        assert_eq!(all[0].chunk.section.as_deref(), Some("Học vấn"));
+        assert_eq!(all[2].chunk.doc, "JD.md");
+    }
+
+    #[test]
+    fn too_much_text_or_none_is_not_a_small_set() {
+        let s = store_with(&[("d1", "a.txt")]);
+        assert!(
+            s.everything_if_small(1000).unwrap().is_none(),
+            "no documents yet"
+        );
+        s.replace("d1", &[chunk("a.txt", None, &"x".repeat(100))])
+            .unwrap();
+        assert!(s.everything_if_small(99).unwrap().is_none());
+        assert!(s.everything_if_small(100).unwrap().is_some());
+    }
+
+    #[test]
+    fn the_size_counts_characters_not_bytes() {
+        let s = store_with(&[("d1", "a.txt")]);
+        // 10 characters, 30 bytes.
+        s.replace("d1", &[chunk("a.txt", None, "ệệệệệệệệệệ")])
+            .unwrap();
+        assert!(s.everything_if_small(10).unwrap().is_some());
     }
 
     #[test]

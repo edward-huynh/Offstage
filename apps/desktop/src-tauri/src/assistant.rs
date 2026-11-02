@@ -39,6 +39,12 @@ const EXCERPT_CHARS: usize = 4_000;
 /// 400 to 600 tokens of documents keep the first token near two seconds (`docs/LLM-BENCH.md`).
 const LOCAL_EXCERPTS: usize = 3;
 const LOCAL_EXCERPT_CHARS: usize = 2_000;
+/// When searching finds nothing but all the documents together are no longer than this, they are
+/// all sent. A CV and a job description are a few thousand characters, and a question such as
+/// "where did you study?" finds nothing in them by search (`docs/LLM-BENCH.md`, `offstage-rag`).
+const WHOLE_CHARS: usize = 8_000;
+/// The same for the model on this machine, which pays for every token it reads.
+const LOCAL_WHOLE_CHARS: usize = 3_000;
 
 /// How long a provider may take to write the first token before the model on this machine
 /// takes over.
@@ -172,9 +178,17 @@ fn answer(app: &AppHandle, question: String, language: Option<String>, history: 
         },
     );
     let budget = if config.local_only {
-        (LOCAL_EXCERPTS, LOCAL_EXCERPT_CHARS)
+        Budget {
+            excerpts: LOCAL_EXCERPTS,
+            chars: LOCAL_EXCERPT_CHARS,
+            whole_chars: LOCAL_WHOLE_CHARS,
+        }
     } else {
-        (EXCERPTS, EXCERPT_CHARS)
+        Budget {
+            excerpts: EXCERPTS,
+            chars: EXCERPT_CHARS,
+            whole_chars: WHOLE_CHARS,
+        }
     };
 
     // A new question replaces the answer being written.
@@ -246,7 +260,7 @@ async fn retrieve(
     index: Option<ChunkStore>,
     embedder: Option<Arc<E5Embedder>>,
     question: String,
-    (excerpts, chars): (usize, usize),
+    budget: Budget,
 ) -> Vec<Excerpt> {
     let Some(index) = index else {
         return Vec::new();
@@ -265,7 +279,7 @@ async fn retrieve(
             model: embedding::MODEL_ID,
             vector,
         });
-        index.search_with(&question, semantic.as_ref(), excerpts, chars)
+        gather(&index, &question, semantic.as_ref(), budget)
     })
     .await;
     match found {
@@ -276,6 +290,34 @@ async fn retrieve(
         }
         Err(_) => Vec::new(),
     }
+}
+
+/// How much of the user's documents goes with a question.
+#[derive(Debug, Clone, Copy)]
+struct Budget {
+    /// Most excerpts found by searching.
+    excerpts: usize,
+    /// Most characters of them in all.
+    chars: usize,
+    /// All the documents are sent when searching finds nothing and they are this short.
+    whole_chars: usize,
+}
+
+/// The chunks for `question`: what search finds, or, when it finds nothing and the documents are
+/// short, all of them.
+fn gather(
+    index: &ChunkStore,
+    question: &str,
+    semantic: Option<&SemanticQuery<'_>>,
+    budget: Budget,
+) -> Result<Vec<SearchHit>, offstage_rag::RagError> {
+    let found = index.search_with(question, semantic, budget.excerpts, budget.chars)?;
+    if !found.is_empty() {
+        return Ok(found);
+    }
+    Ok(index
+        .everything_if_small(budget.whole_chars)?
+        .unwrap_or_default())
 }
 
 fn excerpts_of(hits: Vec<SearchHit>) -> Vec<Excerpt> {
@@ -477,6 +519,74 @@ mod tests {
             },
             score: 1.0,
         }
+    }
+
+    fn index_with(texts: &[(&str, &str)]) -> ChunkStore {
+        let db = offstage_core::db::Db::open_in_memory().unwrap();
+        db.lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO knowledge (id, name, kind, size_bytes, added_at)
+                 VALUES ('d1', 'CV.md', 'markdown', 1, 1)",
+                [],
+            )
+            .unwrap();
+        let index = ChunkStore::new(db);
+        let chunks: Vec<_> = texts
+            .iter()
+            .map(|(section, text)| offstage_rag::Chunk {
+                doc: "CV.md".into(),
+                section: Some((*section).into()),
+                content: (*text).into(),
+            })
+            .collect();
+        index.replace("d1", &chunks).unwrap();
+        index
+    }
+
+    const BUDGET: Budget = Budget {
+        excerpts: 4,
+        chars: 4_000,
+        whole_chars: 500,
+    };
+
+    #[test]
+    fn when_search_finds_the_paragraph_only_that_is_sent() {
+        let index = index_with(&[
+            ("Học vấn", "Đại học Bách khoa Hà Nội"),
+            ("Sở thích", "Chạy bộ và đọc sách"),
+        ]);
+        let hits = gather(&index, "Bạn tốt nghiệp đại học nào?", None, BUDGET).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].chunk.section.as_deref(), Some("Học vấn"));
+    }
+
+    #[test]
+    fn when_search_finds_nothing_short_documents_are_sent_whole() {
+        let index = index_with(&[
+            ("Học vấn", "Đại học Bách khoa Hà Nội"),
+            ("Sở thích", "Chạy bộ và đọc sách"),
+        ]);
+        // English question, Vietnamese CV: no word in common.
+        let hits = gather(&index, "Where did you study?", None, BUDGET).unwrap();
+        let sections: Vec<_> = hits.iter().map(|h| h.chunk.section.as_deref()).collect();
+        assert_eq!(sections, [Some("Học vấn"), Some("Sở thích")]);
+    }
+
+    #[test]
+    fn when_search_finds_nothing_long_documents_are_not_dumped() {
+        let index = index_with(&[("Dài", &"chữ ".repeat(300))]);
+        assert!(gather(&index, "Where did you study?", None, BUDGET)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn without_documents_nothing_is_sent() {
+        let index = index_with(&[]);
+        assert!(gather(&index, "Where did you study?", None, BUDGET)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

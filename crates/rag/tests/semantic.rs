@@ -176,3 +176,58 @@ fn a_question_far_from_every_document_gets_nothing() {
     let store = indexed(&e);
     assert!(ask(&e, &store, "What is your favourite food?").is_empty());
 }
+
+/// What speech recognition actually wrote for a spoken English question about "PostgreSQL" (the
+/// real model, `tests` in `offstage-stt`): "PostGur SQL". The CV is the real PDF fixture.
+#[test]
+#[ignore = "needs the model files"]
+fn a_question_misheard_by_speech_recognition_still_finds_the_right_paragraph() {
+    let e = embedder();
+    let db = Db::open_in_memory().unwrap();
+    let store = ChunkStore::new(db.clone());
+    db.lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO knowledge (id, name, kind, size_bytes, added_at)
+             VALUES ('cv', 'cv.pdf', 'pdf', 1, 1)",
+            [],
+        )
+        .unwrap();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cv.pdf");
+    index_file(&store, "cv", "cv.pdf", KnowledgeKind::Pdf, &path).unwrap();
+    store.embed_pending(&e, MODEL, |_| {}).unwrap();
+
+    for question in [
+        "Can you tell me about your experience with PostGur SQL?",
+        "Bạn có kinh nghiệm với cơ sở dữ liệu không?",
+        "Bạn học trường nào?",
+    ] {
+        let hits = ask(&e, &store, question);
+        eprintln!("{question} -> {hits:?}");
+        assert!(!hits.is_empty(), "{question}");
+    }
+    let found = |q: &str, needle: &str| {
+        let v = e.embed_query(q).unwrap();
+        store
+            .search_with(
+                q,
+                Some(&SemanticQuery {
+                    model: MODEL,
+                    vector: &v,
+                }),
+                4,
+                4000,
+            )
+            .unwrap()
+            .iter()
+            .any(|h| h.chunk.content.contains(needle))
+    };
+    assert!(found(
+        "Can you tell me about your experience with PostGur SQL?",
+        "PostgreSQL"
+    ));
+    assert!(found("Bạn học trường nào?", "Bách khoa"));
+    // Known gap, measured: an English question about a Vietnamese CV that is a single chunk
+    // scores 0.76 to 0.79 against it, no higher than "what is the weather like today" (0.78), so
+    // "Where did you study?" finds nothing. See CLAUDE.md.
+}

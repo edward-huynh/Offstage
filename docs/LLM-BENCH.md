@@ -95,3 +95,15 @@ Rút ra:
 - Tài liệu tiếng Việt thật và câu hỏi thật. Bộ mẫu ở đây nhỏ, tự viết và dễ. Mỗi cấu hình chỉ chạy một lần, và chỉ có 1 câu tiếng Anh nên số ngôn ngữ ở trên chỉ là dấu hiệu.
 - Windows, máy chỉ có CPU.
 - Tài liệu tiếng Anh với câu hỏi tiếng Việt (chiều ngược lại của lỗi ngôn ngữ).
+
+## Tên riêng khi trả lời tiếng Anh (2026-11-02)
+
+Thử với CV mẫu bằng tiếng Việt (ghi "Đại học Bách khoa Hà Nội"), câu hỏi "Where did you study?", gửi cả CV cho model, đúng như app làm khi tìm không ra gì. `crates/llm/tests/local_real.rs`, giải mã tham lam.
+
+| Dòng ngôn ngữ sau câu hỏi | Qwen3 4B |
+|---|---|
+| "Answer in English." | "I studied at the University of Science, Ho Chi Minh City." **Sai**: model dịch và bịa tên trường, dù tài liệu có sẵn |
+| Không có dòng ngôn ngữ | "Tôi học tại Đại học Bách khoa Hà Nội." Đúng, nhưng trả lời bằng tiếng Việt |
+| "Answer in English. Keep names of schools, companies and places exactly as written in the documents." | "I studied at Đại học Bách khoa Hà Nội." **Đúng** |
+
+Qwen3 1.7B đúng tên trường với quy tắc giữ tên riêng, nhưng một lần chạy vẫn trả lời tiếng Việt cho câu hỏi tiếng Anh. Mỗi cấu hình chạy một lần, một câu hỏi, nên đây là dấu hiệu chứ chưa phải thống kê. App giờ thêm câu "Keep names..." vào dòng ngôn ngữ tiếng Anh khi có đoạn tài liệu, và thêm một quy tắc giữ tên riêng vào system prompt.
