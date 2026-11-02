@@ -45,6 +45,8 @@ pub async fn set_active_workspace(
     let store = store.inner().clone();
     let workspace =
         crate::off_main(move || store.set_active(&id).map_err(|e| e.to_string())).await?;
+    // The new workspace may want another model, or none.
+    crate::local_llm::refresh(&app);
     changed(&app);
     Ok(workspace)
 }
@@ -71,6 +73,8 @@ pub async fn update_workspace(
     let store = store.inner().clone();
     let workspace =
         crate::off_main(move || store.update(&id, update).map_err(|e| e.to_string())).await?;
+    // Its choices (local only, provider) may have changed what the running model should be.
+    crate::local_llm::refresh(&app);
     changed(&app);
     Ok(workspace)
 }
@@ -104,6 +108,8 @@ pub async fn delete_workspace(
         store.delete(&id).map_err(|e| e.to_string())
     })
     .await?;
+    // If the one in use went, another took its place.
+    crate::local_llm::refresh(&app);
     changed(&app);
     Ok(())
 }

@@ -173,3 +173,23 @@ Một phần khoảng cách là do cách viết số: PhoWhisper viết số th�
 5. Phát hiện câu hỏi (Phase 3) dùng từ hỏi tiếng Việt, không dựa vào dấu `?`.
 6. Cân nhắc rút `end_silence_ms` hoặc hiển thị chữ tạm thời (partial transcript) nếu cần độ trễ cảm nhận dưới 1 s.
 7. Theo dõi kích thước binary: còn khoảng 4,4 MiB ngân sách. Model không đóng gói trong app nên PhoWhisper không ảnh hưởng mục này.
+
+## Model `base` so với `small` (2026-11-02)
+
+Cùng 16 câu, cùng cách đo, ép tiếng Việt, máy M1 Pro, 2 lần chạy mỗi câu. `ggml-base-q5_1.bin` (59.707.625 byte, SHA-256 `422f1ae4…8898`, cùng commit với `small`). Bộ đo tiếng Anh bị ép tiếng Việt nên bỏ qua. Bộ nhớ là `maximum resident set size` của cả tiến trình đo.
+
+| | `small` q5_1 | `base` q5_1 |
+|---|---|---|
+| WER tiếng Việt, sạch | 14,0% | 17,8% |
+| WER, nhiễu SNR 20 dB | 17,8% | 24,2% |
+| WER, nhiễu SNR 10 dB | 19,9% | 34,7% |
+| Bộ nhớ, GPU (Metal) | 394 MB | 182 MB |
+| Bộ nhớ, CPU | 523 MB | 275 MB |
+| Độ trễ mỗi câu, CPU | 730 đến 1130 ms | 240 đến 500 ms |
+| Độ trễ mỗi câu, GPU | 380 đến 650 ms | 180 đến 630 ms |
+
+Rút ra:
+
+- `small` chỉ dùng khoảng 0,4 đến 0,5 GB, nên nó chạy được trên gần như mọi máy. `base` tiết kiệm khoảng 0,2 GB và nhanh hơn 1,5 đến 3 lần trên CPU, nhưng **kém rõ rệt khi có tiếng ồn** (WER 34,7% so với 19,9% ở 10 dB).
+- Vì vậy app chọn `small` cho mọi máy từ 6 GiB RAM trở lên, và chỉ chọn `base` dưới mức đó hoặc khi người dùng tự chọn (Cài đặt, Giọng nói). Mốc 6 GiB là phán đoán, không phải số đo: chưa có máy nào ít RAM để thử. Máy có CPU yếu mà đủ RAM cũng có thể muốn `base` vì độ trễ, và hiện phải tự chọn.
+- Chưa đo trên Windows, trên CPU yếu hơn M1 Pro, và với giọng người thật.

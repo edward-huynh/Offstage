@@ -4,6 +4,7 @@ import {
   deleteKnowledge,
   errorMessage,
   importKnowledge,
+  importKnowledgePaths,
   knowledgeIndexStatus,
   listKnowledge,
   onKnowledgeIndexed,
@@ -105,6 +106,24 @@ export function useKnowledge() {
     return report;
   }, [run]);
 
+  /** Imports files dropped on the window. Resolves to the report, or `null` when the call failed. */
+  const importPaths = useCallback(
+    async (paths: string[]): Promise<ImportReport | null> => {
+      if (busy.current || paths.length === 0) return null;
+      busy.current = true;
+      setImporting(true);
+      let report: ImportReport | null = null;
+      await run(async () => {
+        report = await importKnowledgePaths(paths);
+        setDocs(await listKnowledge());
+      });
+      busy.current = false;
+      setImporting(false);
+      return report;
+    },
+    [run],
+  );
+
   /** Stores typed or pasted text as a document. Resolves to `true` once it is saved. */
   const create = useCallback(
     (title: string, kind: "markdown" | "text", text: string) =>
@@ -126,5 +145,5 @@ export function useKnowledge() {
 
   const clearError = useCallback(() => setError(null), []);
 
-  return { docs, index, error, importing, clearError, refresh, importFiles, create, remove };
+  return { docs, index, error, importing, clearError, refresh, importFiles, importPaths, create, remove };
 }

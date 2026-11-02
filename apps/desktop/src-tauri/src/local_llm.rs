@@ -40,16 +40,6 @@ pub struct LocalModel {
     download: std::sync::Mutex<Option<CancellationToken>>,
 }
 
-/// The memory of this computer in bytes, or 0 if it cannot be read. Read once: it does not change.
-fn total_ram() -> u64 {
-    static RAM: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *RAM.get_or_init(|| {
-        let mut system = sysinfo::System::new();
-        system.refresh_memory();
-        system.total_memory()
-    })
-}
-
 /// The id of the model a setting stands for: [`AUTO_LOCAL_MODEL`] becomes the one that suits the
 /// memory of the computer, anything else is already an id.
 fn resolve_with(id: &str, ram_bytes: u64) -> String {
@@ -61,7 +51,7 @@ fn resolve_with(id: &str, ram_bytes: u64) -> String {
 }
 
 fn resolve(id: &str) -> String {
-    resolve_with(id, total_ram())
+    resolve_with(id, crate::hardware::total_ram())
 }
 
 fn spec_of(id: &str) -> Option<ModelSpec> {
@@ -177,9 +167,8 @@ pub fn release(app: &AppHandle) {
 /// Listening started. With the assistant on and local-only, load the model now so the first
 /// question does not wait for it. Otherwise it loads when an answer first needs it.
 pub fn pin(app: &AppHandle) {
-    let Ok(Some(config)) =
-        crate::storage::get::<AssistantConfig>(app, crate::assistant::CONFIG_KEY)
-    else {
+    // The workspace in use counts: it can keep the call on this computer.
+    let Ok(config) = crate::assistant::effective_config(app) else {
         return;
     };
     if !(config.enabled && config.local_only) {
@@ -192,6 +181,22 @@ pub fn pin(app: &AppHandle) {
             }
         });
     }
+}
+
+/// The workspace in use, or its choices, changed. If the model on this computer is running (a
+/// call is going on), stop it and start the one the workspace now asks for, so the memory of the
+/// old one is given back and the first question does not wait for the new one. When nothing is
+/// running, nothing is started: the next answer loads what it needs.
+pub fn refresh(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let old = app.state::<LocalModel>().loaded.lock().await.take();
+        let was_running = old.is_some();
+        let _ = tauri::async_runtime::spawn_blocking(move || drop(old)).await;
+        if was_running {
+            pin(&app);
+        }
+    });
 }
 
 /// Listening ended.
@@ -233,7 +238,7 @@ pub fn local_llm_info(app: AppHandle) -> Result<LocalLlmInfo, String> {
                 id: spec.id,
             })
             .collect(),
-        ram_bytes: total_ram(),
+        ram_bytes: crate::hardware::total_ram(),
         recommended: resolve(AUTO_LOCAL_MODEL),
         engine_found: host_path().is_ok_and(|path| path.is_file()),
     })
@@ -323,11 +328,6 @@ mod tests {
         assert_eq!(resolve_with(AUTO_LOCAL_MODEL, 8 << 30), "qwen3-1.7b-q4_k_m");
         assert_eq!(resolve_with(AUTO_LOCAL_MODEL, 16 << 30), "qwen3-4b-q4_k_m");
         assert_eq!(resolve_with(AUTO_LOCAL_MODEL, 0), "qwen3-1.7b-q4_k_m");
-    }
-
-    #[test]
-    fn the_memory_of_this_machine_can_be_read() {
-        assert!(total_ram() > 512 << 20, "{}", total_ram());
     }
 
     #[test]

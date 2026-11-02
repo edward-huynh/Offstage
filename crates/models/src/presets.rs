@@ -19,6 +19,45 @@ pub fn whisper_small_q5() -> ModelSpec {
     }
 }
 
+/// whisper.cpp `base` q5_1 (multilingual), the lighter speech model: 60 MB on disk and about 180
+/// to 280 MB in memory, against 190 MB and 390 to 520 MB for `small`, but clearly less accurate on
+/// Vietnamese in noise (WER 34.7% against 19.9% at 10 dB, `docs/STT-EVAL.md`). Same commit and
+/// license as `small`; the hash is the LFS oid the Hugging Face API reports and was checked on the
+/// downloaded file.
+pub fn whisper_base_q5() -> ModelSpec {
+    ModelSpec {
+        id: "whisper-base-q5_1".into(),
+        file_name: "ggml-base-q5_1.bin".into(),
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/\
+              5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin"
+            .into(),
+        sha256: "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898".into(),
+        size: 59_707_625,
+        license: "MIT".into(),
+        license_url: Some("https://huggingface.co/ggerganov/whisper.cpp".into()),
+    }
+}
+
+/// The speech models, most accurate first.
+pub fn speech_models() -> Vec<ModelSpec> {
+    vec![whisper_small_q5(), whisper_base_q5()]
+}
+
+/// The least RAM, in bytes, for which the `small` speech model is recommended. `small` takes about
+/// 0.4 to 0.5 GB while it runs, so this only matters on a computer with very little memory.
+pub const WHISPER_SMALL_MIN_RAM: u64 = 6 * 1024 * 1024 * 1024;
+
+/// The speech model that suits a computer with `total_ram_bytes` of memory: `small`, except below
+/// 6 GiB, where `base` leaves more room. An unreadable size (`0`) gets `small`, which is the better
+/// model and light enough for nearly every computer.
+pub fn recommended_speech(total_ram_bytes: u64) -> ModelSpec {
+    if total_ram_bytes != 0 && total_ram_bytes < WHISPER_SMALL_MIN_RAM {
+        whisper_base_q5()
+    } else {
+        whisper_small_q5()
+    }
+}
+
 /// Commit of `Xenova/multilingual-e5-small` that the embedding files below are pinned to. The
 /// repo is the ONNX export of `intfloat/multilingual-e5-small` (model card: MIT). The hashes are
 /// the LFS oids reported by the Hugging Face API for the large files, and the SHA-256 of the
@@ -139,7 +178,7 @@ pub fn recommended_llm(total_ram_bytes: u64) -> ModelSpec {
 }
 
 pub fn all() -> Vec<ModelSpec> {
-    let mut all = vec![whisper_small_q5()];
+    let mut all = speech_models();
     all.extend(multilingual_e5_small());
     all.extend(local_llms());
     all
@@ -188,6 +227,17 @@ mod tests {
         assert_eq!(recommended_llm(64 * GIB).id, "qwen3-4b-q4_k_m");
         assert_eq!(recommended_llm(15 * GIB - 1).id, "qwen3-1.7b-q4_k_m");
         assert_eq!(recommended_llm(0).id, "qwen3-1.7b-q4_k_m", "unknown memory");
+    }
+
+    #[test]
+    fn the_recommended_speech_model_is_small_unless_memory_is_very_short() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        assert_eq!(recommended_speech(16 * GIB).id, "whisper-small-q5_1");
+        assert_eq!(recommended_speech(6 * GIB).id, "whisper-small-q5_1");
+        assert_eq!(recommended_speech(6 * GIB - 1).id, "whisper-base-q5_1");
+        assert_eq!(recommended_speech(4 * GIB).id, "whisper-base-q5_1");
+        // Unknown memory: the better model.
+        assert_eq!(recommended_speech(0).id, "whisper-small-q5_1");
     }
 
     #[test]

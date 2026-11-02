@@ -28,7 +28,7 @@ Everything set up in the walkthrough can be changed in Settings.
 | Home | Back to top |
 | Esc | Stop |
 
-Global shortcuts work even when Offstage is not in front: `Ctrl/⌘+Alt+Space` play/pause, `Ctrl/⌘+Alt+↑/↓` speed, `Ctrl/⌘+Alt+O` hide/show, `Ctrl/⌘+Alt+T` click-through.
+Global shortcuts work even when Offstage is not in front: `Ctrl/⌘+Alt+Space` play/pause, `Ctrl/⌘+Alt+↑/↓` speed, `Ctrl/⌘+Alt+O` hide/show, `Ctrl/⌘+Alt+T` click-through. Change them in Settings, System, Shortcuts: press **Change**, then the new combination (it needs Ctrl, Alt or ⌘, and must not be used by another action; **Default** puts it back).
 
 ## Listening to a call (Interview)
 
@@ -49,7 +49,7 @@ Do not take a suggestion as fact: small models can add details that are not in y
 
 ## Documents (Knowledge)
 
-Add a CV, a job description, a rubric or notes: `.pdf`, `.docx`, `.md` or `.txt` files (up to 20 MB), or type them. Offstage reads the text on your computer and indexes it to find related passages. Each document shows "Read by the AI", or "Could not read" with the reason (for example a PDF scanned from an image has no text).
+Add a CV, a job description, a rubric or notes: `.pdf`, `.docx`, `.md` or `.txt` files (up to 20 MB), with **Add files** or by **dragging them onto the window**, or type them. Offstage reads the text on your computer and indexes it to find related passages. Each document shows "Read by the AI", or "Could not read" with the reason (for example a PDF scanned from an image has no text).
 
 - **Search by meaning** (optional): download a small model (about 135 MB) so the AI finds related passages even when the question does not use the words of the documents, even in another language. Without it, search still works by words.
 - When search finds nothing and the documents are short (a CV and a job description), Offstage sends all of them.

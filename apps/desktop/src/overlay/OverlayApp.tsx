@@ -5,6 +5,7 @@ import { TranscriptPanel } from "../TranscriptPanel";
 import {
   captureProtection,
   getSettings,
+  hotkeyBindings,
   hotkeyFailures,
   loadConfig,
   onClickThrough,
@@ -16,6 +17,8 @@ import {
   type OverlayConfig,
   type Speaker,
 } from "../tauri";
+import { formatAccelerator } from "../lib/accelerator";
+import { useActiveWorkspace } from "../useActiveWorkspace";
 import { useAutoScroll } from "../useAutoScroll";
 import { useAnswer } from "../useAssistant";
 import { useListening } from "../useListening";
@@ -28,6 +31,7 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
 /** The overlay: reads the content being played, or shows live captions in an interview. */
 export function OverlayApp() {
   useT();
+  const workspace = useActiveWorkspace();
   const [cfg, setCfg] = useState<OverlayConfig | null>(null);
   const [playing, setPlaying] = useState(false);
   const [captionsOpen, setCaptionsOpen] = useState(false);
@@ -93,6 +97,18 @@ export function OverlayApp() {
   useEffect(() => {
     scroller?.scrollTo({ top: 0 });
   }, [play.body, scroller]);
+
+  // The shortcut that turns click-through off is named in the bar, so it is the one in use now:
+  // it is read again whenever click-through turns on.
+  const [clickThroughKey, setClickThroughKey] = useState("");
+  const clickThrough = cfg?.click_through ?? false;
+  useEffect(() => {
+    if (!clickThrough) return;
+    void hotkeyBindings().then((bindings) => {
+      const binding = bindings.find((b) => b.action === "toggle_click_through");
+      if (binding) setClickThroughKey(formatAccelerator(binding.accelerator));
+    });
+  }, [clickThrough]);
 
   const [hotkeyIssues, setHotkeyIssues] = useState<string[]>([]);
   useEffect(() => {
@@ -231,6 +247,15 @@ export function OverlayApp() {
       <header className="bar" data-tauri-drag-region>
         <span className={playing ? "dot live" : "dot"} aria-hidden />
         {interview && <span data-tauri-drag-region>Interview</span>}
+        {interview && workspace && (
+          <span
+            className="script-title"
+            title={t("overlay.workspace", { name: workspace.name })}
+            data-tauri-drag-region
+          >
+            {workspace.name}
+          </span>
+        )}
         {play.title && (
           <span className="script-title" title={play.title} data-tauri-drag-region>
             {play.title}
@@ -247,7 +272,7 @@ export function OverlayApp() {
         )}
         {cfg.click_through && (
           <span className="warn" data-tauri-drag-region>
-            {t("overlay.clickThrough")}
+            {t("overlay.clickThrough", { key: clickThroughKey })}
           </span>
         )}
         {hotkeyIssues.length > 0 && (

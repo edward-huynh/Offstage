@@ -5,8 +5,9 @@ import { Card, CardContent } from "@/components/motion/card";
 import { Input } from "@/components/motion/input";
 import { RadioGroup, RadioGroupItem } from "@/components/motion/radio";
 import { cn } from "@/lib/utils";
-import { type ImportReport, type IndexStatus, type KnowledgeKind } from "../tauri";
+import { onFileDrag, type ImportReport, type IndexStatus, type KnowledgeKind } from "../tauri";
 import { locale, useT, type Key } from "../i18n";
+import { translateError } from "../i18n/errors";
 import { useEmbeddingModel } from "../useEmbeddingModel";
 import { useKnowledge } from "../useKnowledge";
 import { EmptyState, ErrorNote, Progress, Screen } from "./ui";
@@ -61,6 +62,32 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const titleRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const { importPaths } = knowledge;
+
+  // Files dropped on the window are imported like picked ones. Rust reads them.
+  useEffect(() => {
+    let cancelled = false;
+    let off: (() => void) | undefined;
+    void onFileDrag((drag) => {
+      if (drag.state === "over") setDragging(true);
+      else if (drag.state === "leave") setDragging(false);
+      else {
+        setDragging(false);
+        setReport(null);
+        void importPaths(drag.paths).then((result) => {
+          if (result && (result.imported.length > 0 || result.skipped.length > 0)) setReport(result);
+        });
+      }
+    }).then((unlisten) => {
+      if (cancelled) unlisten();
+      else off = unlisten;
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, [importPaths]);
 
   useEffect(() => {
     if (writing) titleRef.current?.focus();
@@ -260,6 +287,15 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
         </form>
       )}
 
+      {dragging && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-3 z-40 grid place-items-center rounded-2xl border-2 border-dashed border-primary/60 bg-background/85 text-sm font-medium text-foreground"
+        >
+          {t("knowledge.dropHint")}
+        </div>
+      )}
+
       {report && (
         <div
           role="status"
@@ -274,12 +310,27 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
               <ul className="mt-1 list-disc space-y-1 pl-5">
                 {report.skipped.map((s, i) => (
                   <li key={`${s.name}-${i}`}>
-                    <strong className="font-medium text-foreground">{s.name}</strong>: {s.reason}
+                    <strong className="font-medium text-foreground">{translateError(s.name)}</strong>: {translateError(s.reason)}
                   </li>
                 ))}
               </ul>
             </>
           )}
+        </div>
+      )}
+
+      {knowledge.docs.some((doc) => !knowledge.index[doc.id]) && (
+        <div role="status" className="flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3">
+          <Progress
+            value={knowledge.docs.filter((doc) => knowledge.index[doc.id]).length}
+            max={knowledge.docs.length}
+          />
+          <span className="text-xs text-muted-foreground">
+            {t("knowledge.reading", {
+              done: knowledge.docs.filter((doc) => knowledge.index[doc.id]).length,
+              total: knowledge.docs.length,
+            })}
+          </span>
         </div>
       )}
 
@@ -322,7 +373,7 @@ export function Knowledge({ workspaceName }: { workspaceName?: string }) {
                       </span>
                       {failure && (
                         <span className="mt-0.5 block text-xs leading-snug text-destructive">
-                          {failure}
+                          {translateError(failure)}
                         </span>
                       )}
                     </div>

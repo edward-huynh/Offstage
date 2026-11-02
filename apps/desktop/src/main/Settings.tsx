@@ -19,14 +19,19 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
   captureProtection,
+  errorMessage,
   hotkeyBindings,
   openPrivacySettings,
+  resetHotkey,
+  setHotkey,
+  type AppSettings,
   type CaptureProtection,
   type HotkeyBinding,
   type OverlayConfig,
   type SpeechLanguage,
 } from "../tauri";
 import { setLanguage, useT, type Key, type Lang } from "../i18n";
+import { acceleratorFromEvent, formatAccelerator } from "../lib/accelerator";
 import { useModel } from "../useModel";
 import { useSettings } from "../useSettings";
 import { AssistantSettings } from "./AssistantSettings";
@@ -115,18 +120,6 @@ function GroupPanel({
   );
 }
 
-/** Key combination as shown to the user: ⌘ ⌥ on macOS, Ctrl Alt elsewhere. */
-function formatAccelerator(accelerator: string): string {
-  const mac = document.documentElement.dataset.platform === "mac";
-  const symbols: Record<string, string> = mac
-    ? { CommandOrControl: "⌘", Alt: "⌥", Shift: "⇧", Up: "↑", Down: "↓", Left: "←", Right: "→" }
-    : { CommandOrControl: "Ctrl", Up: "↑", Down: "↓", Left: "←", Right: "→" };
-  return accelerator
-    .split("+")
-    .map((key) => symbols[key] ?? key)
-    .join(mac ? " " : " + ");
-}
-
 function SliderRow(props: {
   label: string;
   hint?: string;
@@ -169,11 +162,33 @@ export function Settings() {
   const [group, setGroup] = useSettingsGroup();
   const [protection, setProtection] = useState<CaptureProtection>("unknown");
   const [hotkeys, setHotkeys] = useState<HotkeyBinding[]>([]);
+  // The action whose new shortcut is being waited for, and why the last change was refused.
+  const [capturing, setCapturing] = useState<HotkeyBinding["action"] | null>(null);
+  const [hotkeyError, setHotkeyError] = useState<string | null>(null);
 
   useEffect(() => {
     void captureProtection().then(setProtection);
     void hotkeyBindings().then(setHotkeys);
   }, []);
+
+  // While a shortcut is being chosen, the next key press with its modifiers is the answer.
+  useEffect(() => {
+    if (!capturing) return;
+    const onKey = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === "Escape") return setCapturing(null);
+      const accelerator = acceleratorFromEvent(event);
+      if (!accelerator) return;
+      setCapturing(null);
+      setHotkeyError(null);
+      setHotkey(capturing, accelerator)
+        .then(setHotkeys)
+        .catch((e) => setHotkeyError(errorMessage(e)));
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [capturing]);
 
   if (!settings || !overlay) {
     return (
@@ -303,6 +318,20 @@ export function Settings() {
                   ))}
                 </RadioGroup>
               </Row>
+              <Row label={t("settings.speech.choice")} hint={t("settings.speech.choiceHint")}>
+                <RadioGroup
+                  orientation="horizontal"
+                  value={settings.speech_model}
+                  onValueChange={(v) =>
+                    void change({ speech_model: v as AppSettings["speech_model"] }).then(() => model.refresh())
+                  }
+                  aria-label={t("settings.speech.choiceLabel")}
+                >
+                  <RadioGroupItem value="auto" label={t("settings.speech.choiceAuto")} />
+                  <RadioGroupItem value="small" label={t("settings.speech.choiceSmall")} />
+                  <RadioGroupItem value="base" label={t("settings.speech.choiceBase")} />
+                </RadioGroup>
+              </Row>
               <Row
                 label={t("settings.speech.model")}
                 hint={
@@ -413,16 +442,44 @@ export function Settings() {
                 {hotkeys.map((h) => (
                   <li key={h.action} className="flex items-center justify-between gap-4 py-3">
                     <span className="text-sm">{t(HOTKEY_LABELS[h.action])}</span>
-                    <kbd
-                      className={cn(
-                        "shrink-0 rounded-md border border-border bg-background px-2 py-1 font-sans text-[11px] text-foreground",
+                    <div className="flex shrink-0 items-center gap-2">
+                      <kbd
+                        className={cn(
+                          "rounded-md border bg-background px-2 py-1 font-sans text-[11px] text-foreground",
+                          capturing === h.action ? "border-primary" : "border-border",
+                        )}
+                      >
+                        {capturing === h.action ? t("settings.hotkeys.press") : formatAccelerator(h.accelerator)}
+                      </kbd>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setHotkeyError(null);
+                          setCapturing(capturing === h.action ? null : h.action);
+                        }}
+                      >
+                        {t("settings.hotkeys.change")}
+                      </Button>
+                      {!h.is_default && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setHotkeyError(null);
+                            void resetHotkey(h.action)
+                              .then(setHotkeys)
+                              .catch((e) => setHotkeyError(errorMessage(e)));
+                          }}
+                        >
+                          {t("settings.hotkeys.reset")}
+                        </Button>
                       )}
-                    >
-                      {formatAccelerator(h.accelerator)}
-                    </kbd>
+                    </div>
                   </li>
                 ))}
               </ul>
+              {hotkeyError && <ErrorNote className="my-3">{hotkeyError}</ErrorNote>}
             </Section>
           </GroupPanel>
         </div>

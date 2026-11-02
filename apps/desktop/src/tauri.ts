@@ -1,7 +1,9 @@
 // Thin wrapper so the UI also runs in a normal browser (`npm run ui`) for quick styling work.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { translateError } from "./i18n/errors";
 
 export type OverlayConfig = {
   font_size: number;
@@ -76,9 +78,9 @@ export async function saveConfig(config: OverlayConfig): Promise<void> {
 // The script commands let errors propagate so the panel can show them. Rust sends the
 // message as a plain string, so a rejection is usually a string, not an Error.
 export function errorMessage(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e instanceof Error) return e.message;
-  return "Có lỗi không xác định";
+  if (typeof e === "string") return translateError(e);
+  if (e instanceof Error) return translateError(e.message);
+  return translateError("Có lỗi không xác định");
 }
 
 export async function listScripts(): Promise<ScriptMeta[]> {
@@ -498,6 +500,29 @@ export async function importKnowledge(): Promise<ImportReport> {
   return invoke<ImportReport>("import_knowledge");
 }
 
+/** Imports files by path, as dropped on the window. Rust checks and reads them. */
+export async function importKnowledgePaths(paths: string[]): Promise<ImportReport> {
+  if (!inTauri()) return { imported: [], skipped: [] };
+  return invoke<ImportReport>("import_knowledge_paths", { paths });
+}
+
+/** What the user is doing with files dragged over the window. */
+export type FileDrag = { state: "over" } | { state: "leave" } | { state: "drop"; paths: string[] };
+
+/**
+ * Files dragged over the window and dropped on it. The system reports the paths, and nothing is
+ * read in the web view. Without Tauri there is no such event.
+ */
+export async function onFileDrag(handler: (drag: FileDrag) => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  return getCurrentWebview().onDragDropEvent((event) => {
+    const drag = event.payload;
+    if (drag.type === "drop") handler({ state: "drop", paths: drag.paths });
+    else if (drag.type === "leave") handler({ state: "leave" });
+    else handler({ state: "over" });
+  });
+}
+
 /**
  * Stores text typed or pasted by the user as a `.md` or `.txt` document. `title` has no
  * extension: Rust adds it. Rejects with a readable message when the text is blank.
@@ -645,6 +670,8 @@ export type SpeechLanguage = "auto" | "vietnamese" | "english";
 /** Settings that are not about the teleprompter look. Rust clamps and stores them. */
 export type AppSettings = {
   speech_language: SpeechLanguage;
+  /** `auto` picks by the computer's memory. */
+  speech_model: "auto" | "small" | "base";
   interview_system_audio: boolean;
   interview_microphone: boolean;
   hide_main_from_capture: boolean;
@@ -656,6 +683,7 @@ export type AppSettings = {
 
 const SETTINGS_DEFAULTS: AppSettings = {
   speech_language: "auto",
+  speech_model: "auto",
   interview_system_audio: true,
   interview_microphone: false,
   hide_main_from_capture: true,
@@ -696,20 +724,51 @@ export async function onSettingsChanged(handler: (settings: AppSettings) => void
   return listen<AppSettings>("settings_changed", (event) => handler(event.payload));
 }
 
-export type HotkeyBinding = { action: "play_pause" | "speed_up" | "speed_down" | "toggle_visibility" | "toggle_click_through"; accelerator: string };
+/** Every action that has a global shortcut, including those Rust handles itself. */
+export type ShortcutAction = HotkeyAction | "toggle_visibility" | "toggle_click_through";
 
-/** Every global shortcut with its default key combination. */
+/** A global shortcut in use. `is_default` is false when the user changed it. */
+export type HotkeyBinding = { action: ShortcutAction; accelerator: string; is_default: boolean };
+
+const DEFAULT_BINDINGS: HotkeyBinding[] = [
+  { action: "play_pause", accelerator: "CommandOrControl+Alt+Space", is_default: true },
+  { action: "speed_up", accelerator: "CommandOrControl+Alt+Up", is_default: true },
+  { action: "speed_down", accelerator: "CommandOrControl+Alt+Down", is_default: true },
+  { action: "toggle_visibility", accelerator: "CommandOrControl+Alt+O", is_default: true },
+  { action: "toggle_click_through", accelerator: "CommandOrControl+Alt+T", is_default: true },
+];
+
+// Without Tauri nothing is registered, so changes are only kept in memory for styling work.
+let browserBindings: HotkeyBinding[] = DEFAULT_BINDINGS;
+
+/** Every global shortcut in use: the user's own, or the default. */
 export async function hotkeyBindings(): Promise<HotkeyBinding[]> {
-  if (!inTauri()) {
-    return [
-      { action: "play_pause", accelerator: "CommandOrControl+Alt+Space" },
-      { action: "speed_up", accelerator: "CommandOrControl+Alt+Up" },
-      { action: "speed_down", accelerator: "CommandOrControl+Alt+Down" },
-      { action: "toggle_visibility", accelerator: "CommandOrControl+Alt+O" },
-      { action: "toggle_click_through", accelerator: "CommandOrControl+Alt+T" },
-    ];
-  }
+  if (!inTauri()) return browserBindings;
   return invoke<HotkeyBinding[]>("hotkey_bindings");
+}
+
+/**
+ * Gives an action another shortcut. Rejects with the reason when Rust refuses it (no Ctrl, Alt or
+ * ⌘, another action uses it, another app owns it). Resolves to the bindings after the change.
+ */
+export async function setHotkey(action: ShortcutAction, accelerator: string): Promise<HotkeyBinding[]> {
+  if (!inTauri()) {
+    browserBindings = browserBindings.map((b) =>
+      b.action === action ? { ...b, accelerator, is_default: false } : b,
+    );
+    return browserBindings;
+  }
+  return invoke<HotkeyBinding[]>("set_hotkey", { action, accelerator });
+}
+
+/** Puts an action back on its default shortcut. */
+export async function resetHotkey(action: ShortcutAction): Promise<HotkeyBinding[]> {
+  if (!inTauri()) {
+    const original = DEFAULT_BINDINGS.find((b) => b.action === action);
+    browserBindings = browserBindings.map((b) => (b.action === action && original ? original : b));
+    return browserBindings;
+  }
+  return invoke<HotkeyBinding[]>("reset_hotkey", { action });
 }
 
 /** What the user chose for the assistant. The key is never part of it. */

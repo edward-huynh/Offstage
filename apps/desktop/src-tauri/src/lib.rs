@@ -1,6 +1,5 @@
 use std::{
     fs,
-    str::FromStr,
     sync::{
         mpsc::{self, RecvTimeoutError},
         Arc, Mutex,
@@ -10,7 +9,9 @@ use std::{
 
 use offstage_core::knowledge::KnowledgeStore;
 use offstage_core::scripts::{self, ScriptError, ScriptHit, ScriptMeta, ScriptStore};
-use offstage_core::{CaptureProtection, HotkeyAction, OverlayConfig, WindowState};
+use offstage_core::{
+    settings::UiLanguage, CaptureProtection, HotkeyAction, OverlayConfig, WindowState,
+};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -18,10 +19,11 @@ use tauri::{
     WindowEvent, Wry,
 };
 use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 mod assistant;
 mod embedding;
+mod hardware;
+mod hotkeys;
 mod knowledge;
 mod listening;
 mod local_llm;
@@ -42,10 +44,6 @@ const SCRIPTS_SEEDED_KEY: &str = "scripts_seeded";
 const MAX_IMPORT_BYTES: u64 = 1_000_000;
 /// How long the window must stay still before its geometry is written.
 const SAVE_DELAY: Duration = Duration::from_millis(500);
-
-/// Shortcuts that could not be registered, e.g. because another app already owns them.
-/// The setup runs before the webview exists, so the UI pulls this instead of waiting for an event.
-struct HotkeyFailures(Vec<String>);
 
 /// The tray checkbox, kept so a hotkey toggle can update its tick.
 struct ClickThroughMenu(CheckMenuItem<Wry>);
@@ -359,7 +357,7 @@ fn set_click_through(app: AppHandle, enabled: bool) -> Result<(), String> {
     apply_click_through(&app, enabled)
 }
 
-fn handle_hotkey(app: &AppHandle, action: HotkeyAction) {
+pub(crate) fn handle_hotkey(app: &AppHandle, action: HotkeyAction) {
     match action {
         HotkeyAction::ToggleVisibility => toggle_overlay(app),
         HotkeyAction::ToggleClickThrough => toggle_click_through(app),
@@ -368,30 +366,6 @@ fn handle_hotkey(app: &AppHandle, action: HotkeyAction) {
             let _ = app.emit(HOTKEY_EVENT, action);
         }
     }
-}
-
-/// Registers every default shortcut and returns a message for each one that failed.
-/// A conflict must not stop the app: the remaining shortcuts still work.
-fn register_hotkeys(app: &AppHandle) -> Vec<String> {
-    let mut failures = Vec::new();
-    for action in HotkeyAction::ALL {
-        let accelerator = action.default_accelerator();
-        let result = Shortcut::from_str(accelerator)
-            .map_err(|e| e.to_string())
-            .and_then(|shortcut| {
-                app.global_shortcut()
-                    .on_shortcut(shortcut, move |app, _, event| {
-                        if event.state() == ShortcutState::Pressed {
-                            handle_hotkey(app, action);
-                        }
-                    })
-                    .map_err(|e| e.to_string())
-            });
-        if let Err(e) = result {
-            failures.push(format!("{accelerator}: {e}"));
-        }
-    }
-    failures
 }
 
 #[cfg(windows)]
@@ -415,9 +389,29 @@ fn capture_protection_status() -> CaptureProtection {
     capture_protection()
 }
 
-#[tauri::command]
-fn hotkey_failures(failures: State<HotkeyFailures>) -> Vec<String> {
-    failures.0.clone()
+/// The words of the tray menu, in the language of the app.
+struct TrayLabels {
+    open: &'static str,
+    toggle: &'static str,
+    click_through: &'static str,
+    quit: &'static str,
+}
+
+fn tray_labels(language: UiLanguage) -> TrayLabels {
+    match language {
+        UiLanguage::Vi => TrayLabels {
+            open: "Mở Offstage",
+            toggle: "Ẩn / Hiện overlay",
+            click_through: "Chuột xuyên qua",
+            quit: "Thoát",
+        },
+        UiLanguage::En => TrayLabels {
+            open: "Open Offstage",
+            toggle: "Hide / Show overlay",
+            click_through: "Click-through",
+            quit: "Quit",
+        },
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -489,11 +483,10 @@ pub fn run() {
                 eprintln!("could not apply capture protection to the main window: {e}");
             }
 
-            let failures = register_hotkeys(app.handle());
-            for failure in &failures {
+            app.manage(hotkeys::HotkeyFailures::default());
+            for failure in hotkeys::apply(app.handle()) {
                 eprintln!("global shortcut not registered: {failure}");
             }
-            app.manage(HotkeyFailures(failures));
 
             // Restore the saved click-through state so it survives a restart.
             let click_through = load_config(app.handle())?.click_through;
@@ -503,17 +496,20 @@ pub fn run() {
                 }
             }
 
-            let open = MenuItem::with_id(app, "open", "Mở Offstage", true, None::<&str>)?;
-            let toggle = MenuItem::with_id(app, "toggle", "Ẩn / Hiện overlay", true, None::<&str>)?;
+            // The menu is written in the language of the app as it was at start; a change of
+            // language shows in it the next time the app starts.
+            let labels = tray_labels(settings::load(app.handle())?.ui_language);
+            let open = MenuItem::with_id(app, "open", labels.open, true, None::<&str>)?;
+            let toggle = MenuItem::with_id(app, "toggle", labels.toggle, true, None::<&str>)?;
             let through = CheckMenuItem::with_id(
                 app,
                 "click_through",
-                "Chuột xuyên qua",
+                labels.click_through,
                 true,
                 click_through,
                 None::<&str>,
             )?;
-            let quit = MenuItem::with_id(app, "quit", "Thoát", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", labels.quit, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &toggle, &through, &quit])?;
             app.manage(ClickThroughMenu(through));
 
@@ -541,7 +537,9 @@ pub fn run() {
             get_config,
             update_config,
             set_click_through,
-            hotkey_failures,
+            hotkeys::hotkey_failures,
+            hotkeys::set_hotkey,
+            hotkeys::reset_hotkey,
             capture_protection_status,
             list_scripts,
             create_script,
@@ -565,9 +563,10 @@ pub fn run() {
             permissions::open_privacy_settings,
             settings::get_settings,
             settings::update_settings,
-            settings::hotkey_bindings,
+            hotkeys::hotkey_bindings,
             knowledge::list_knowledge,
             knowledge::import_knowledge,
+            knowledge::import_knowledge_paths,
             knowledge::create_knowledge,
             knowledge::delete_knowledge,
             rag::knowledge_index_status,
@@ -605,13 +604,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_accelerators_parse() {
-        for action in HotkeyAction::ALL {
-            let accelerator = action.default_accelerator();
-            assert!(
-                Shortcut::from_str(accelerator).is_ok(),
-                "{accelerator} is not a valid accelerator"
-            );
+    fn the_tray_menu_has_four_words_in_each_language_and_they_differ() {
+        let vi = tray_labels(UiLanguage::Vi);
+        let en = tray_labels(UiLanguage::En);
+        for (a, b) in [
+            (vi.open, en.open),
+            (vi.toggle, en.toggle),
+            (vi.click_through, en.click_through),
+            (vi.quit, en.quit),
+        ] {
+            assert!(!a.is_empty() && !b.is_empty());
+            assert_ne!(a, b);
         }
     }
 }

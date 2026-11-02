@@ -178,7 +178,7 @@ pub fn protection_for_windows_build(build: u32) -> CaptureProtection {
 
 /// Actions a global hotkey can trigger. Serialized in snake_case as the payload
 /// of the `hotkey` event the overlay listens to.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum HotkeyAction {
     PlayPause,
@@ -207,6 +207,19 @@ impl HotkeyAction {
             // Not C: Cmd+Alt+C opens "Inspect element" in Chrome and would be stolen globally.
             Self::ToggleClickThrough => "CommandOrControl+Alt+T",
         }
+    }
+}
+
+/// The shortcuts the user changed, by action. An action that is not here uses its default.
+pub type HotkeyOverrides = std::collections::BTreeMap<HotkeyAction, String>;
+
+impl HotkeyAction {
+    /// The shortcut in use: the user's own, or the default.
+    pub fn accelerator(self, overrides: &HotkeyOverrides) -> String {
+        overrides
+            .get(&self)
+            .cloned()
+            .unwrap_or_else(|| self.default_accelerator().to_owned())
     }
 }
 
@@ -486,6 +499,38 @@ mod tests {
         assert_eq!(back, HotkeyAction::PlayPause);
         let json = serde_json::to_string(&HotkeyAction::ToggleClickThrough).unwrap();
         assert_eq!(json, r#""toggle_click_through""#);
+    }
+
+    #[test]
+    fn a_changed_shortcut_replaces_the_default_for_its_action_only() {
+        let mut overrides = HotkeyOverrides::new();
+        overrides.insert(HotkeyAction::PlayPause, "Control+Shift+P".to_owned());
+        assert_eq!(
+            HotkeyAction::PlayPause.accelerator(&overrides),
+            "Control+Shift+P"
+        );
+        assert_eq!(
+            HotkeyAction::SpeedUp.accelerator(&overrides),
+            HotkeyAction::SpeedUp.default_accelerator()
+        );
+        assert_eq!(
+            HotkeyAction::ToggleVisibility.accelerator(&HotkeyOverrides::new()),
+            "CommandOrControl+Alt+O"
+        );
+    }
+
+    #[test]
+    fn overrides_are_stored_as_a_json_object_keyed_by_action() {
+        let mut overrides = HotkeyOverrides::new();
+        overrides.insert(HotkeyAction::ToggleClickThrough, "Alt+Shift+T".to_owned());
+        let json = serde_json::to_string(&overrides).unwrap();
+        assert_eq!(json, r#"{"toggle_click_through":"Alt+Shift+T"}"#);
+        assert_eq!(
+            serde_json::from_str::<HotkeyOverrides>(&json).unwrap(),
+            overrides
+        );
+        // A stored action this version does not know is a decode error, not a silent drop.
+        assert!(serde_json::from_str::<HotkeyOverrides>(r#"{"nope":"A"}"#).is_err());
     }
 
     #[test]

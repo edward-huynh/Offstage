@@ -4,7 +4,7 @@
 use std::{
     fs::{self, File},
     io::Read,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -87,43 +87,79 @@ pub async fn import_knowledge(
     app: AppHandle,
     knowledge: State<'_, Knowledge>,
 ) -> Result<ImportReport, String> {
-    let Some(picked) = app
+    let picked = app
         .dialog()
         .file()
         .add_filter("Tài liệu", &KnowledgeKind::EXTENSIONS)
-        .blocking_pick_files()
-    else {
+        .blocking_pick_files();
+    let Some(picked) = picked else {
         return Ok(ImportReport::default());
     };
-
-    let workspace = crate::workspaces::active(&app)?.id;
+    let mut paths = Vec::new();
     let mut report = ImportReport::default();
     for file in picked {
-        let path = match file.into_path() {
-            Ok(path) => path,
-            Err(e) => {
-                report.skipped.push(SkippedFile {
-                    name: "(không rõ tên)".to_owned(),
-                    reason: format!("Không mở được tệp: {e}"),
-                });
-                continue;
-            }
-        };
+        match file.into_path() {
+            Ok(path) => paths.push(path),
+            Err(e) => report.skipped.push(SkippedFile {
+                name: "(không rõ tên)".to_owned(),
+                reason: format!("Không mở được tệp: {e}"),
+            }),
+        }
+    }
+    let rest = import_into_workspace(&app, &knowledge, paths).await?;
+    report.imported.extend(rest.imported);
+    report.skipped.extend(rest.skipped);
+    Ok(report)
+}
+
+/// Copies files dropped on the window into the store. The paths come from the operating system's
+/// drag and drop, which is the user's own action; each one is checked like a picked file (type,
+/// size) before it is read.
+#[tauri::command]
+pub async fn import_knowledge_paths(
+    app: AppHandle,
+    knowledge: State<'_, Knowledge>,
+    paths: Vec<String>,
+) -> Result<ImportReport, String> {
+    import_into_workspace(
+        &app,
+        &knowledge,
+        paths.into_iter().map(PathBuf::from).collect(),
+    )
+    .await
+}
+
+/// Imports the files into the workspace in use, and starts reading them for the AI. The reading
+/// happens off the window's event loop, and the screen is not kept waiting for the indexing.
+async fn import_into_workspace(
+    app: &AppHandle,
+    knowledge: &State<'_, Knowledge>,
+    paths: Vec<PathBuf>,
+) -> Result<ImportReport, String> {
+    let workspace = crate::workspaces::active(app)?.id;
+    let store = knowledge.0.clone();
+    let report = crate::off_main(move || Ok(import_paths(&store, &workspace, &paths))).await?;
+    crate::rag::index_in_background(app, report.imported.iter().map(|d| d.id.clone()).collect());
+    Ok(report)
+}
+
+/// Imports each file, one bad file not spoiling the rest. A name that appears twice is imported
+/// twice: they are two documents.
+fn import_paths(store: &Mutex<KnowledgeStore>, workspace: &str, paths: &[PathBuf]) -> ImportReport {
+    let mut report = ImportReport::default();
+    for path in paths {
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let result = read_document(&path, &name).and_then(|bytes| {
-            with_store(&knowledge.0, |s| s.import_into(&workspace, &name, &bytes))
-        });
+        let result = read_document(path, &name)
+            .and_then(|bytes| with_store(store, |s| s.import_into(workspace, &name, &bytes)));
         match result {
             Ok(doc) => report.imported.push(doc),
             Err(reason) => report.skipped.push(SkippedFile { name, reason }),
         }
     }
-    // The AI reads them from the index, so reading starts now and the screen is not kept waiting.
-    crate::rag::index_in_background(&app, report.imported.iter().map(|d| d.id.clone()).collect());
-    Ok(report)
+    report
 }
 
 /// Reads a picked file after checking, from its name and its metadata, that the store
@@ -173,6 +209,44 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn store_in(dir: &Scratch) -> Mutex<KnowledgeStore> {
+        Mutex::new(KnowledgeStore::new(
+            offstage_core::db::Db::open_in_memory().unwrap(),
+            dir.0.join("store"),
+        ))
+    }
+
+    #[test]
+    fn dropped_files_are_imported_into_the_workspace_and_a_bad_one_does_not_spoil_the_rest() {
+        let dir = Scratch::new("dropped");
+        let good = dir.0.join("cv.md");
+        fs::write(&good, "# CV").unwrap();
+        let wrong = dir.0.join("virus.exe");
+        fs::write(&wrong, "x").unwrap();
+        let gone = dir.0.join("gone.txt");
+        let also_good = dir.0.join("jd.txt");
+        fs::write(&also_good, "Cần Rust").unwrap();
+
+        let store = store_in(&dir);
+        let report = import_paths(&store, "w1", &[good, wrong, gone, also_good]);
+
+        let names: Vec<_> = report.imported.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["cv.md", "jd.txt"]);
+        let skipped: Vec<_> = report.skipped.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(skipped, ["virus.exe", "gone.txt"]);
+        // They went into the workspace asked for, and into no other.
+        let guard = store.lock().unwrap();
+        assert_eq!(guard.list_in("w1").unwrap().len(), 2);
+        assert!(guard.list_in("default").unwrap().is_empty());
+    }
+
+    #[test]
+    fn nothing_dropped_is_an_empty_report() {
+        let dir = Scratch::new("none");
+        let report = import_paths(&store_in(&dir), "default", &[]);
+        assert!(report.imported.is_empty() && report.skipped.is_empty());
     }
 
     #[test]

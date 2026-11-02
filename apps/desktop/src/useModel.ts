@@ -54,5 +54,10 @@ export function useModel() {
 
   const cancel = useCallback(() => void cancelDownload(), []);
 
-  return { info, installed: info?.installed ?? false, progress, error, download, cancel };
+  /** Reads which model is in use and whether it is here, after the choice of model changed. */
+  const refresh = useCallback(async () => {
+    setInfo(await modelInfo());
+  }, []);
+
+  return { info, installed: info?.installed ?? false, progress, error, download, cancel, refresh };
 }

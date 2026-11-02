@@ -20,6 +20,7 @@ import {
   type Speaker,
 } from "./tauri";
 import { t } from "./i18n";
+import { translateError } from "./i18n/errors";
 
 /** Lines kept on screen. Older ones are dropped, the overlay is a live view, not a log. */
 const MAX_LINES = 40;
@@ -40,7 +41,7 @@ function friendlyError(message: string): string {
   if (message.startsWith("permission denied")) {
     return t("listening.permissionDenied");
   }
-  return message;
+  return translateError(message);
 }
 
 /**

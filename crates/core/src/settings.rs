@@ -25,6 +25,19 @@ impl SpeechLanguage {
     }
 }
 
+/// Which speech model to use.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechModel {
+    /// The one that suits this computer's memory.
+    #[default]
+    Auto,
+    /// More accurate, about 190 MB.
+    Small,
+    /// Lighter, about 60 MB, and less accurate.
+    Base,
+}
+
 /// The language of the app's own text.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -41,6 +54,7 @@ pub enum UiLanguage {
 #[serde(default)]
 pub struct AppSettings {
     pub speech_language: SpeechLanguage,
+    pub speech_model: SpeechModel,
     /// Listen to the system audio (the other side of the call) when an interview starts.
     pub interview_system_audio: bool,
     /// Listen to the microphone when an interview starts.
@@ -69,6 +83,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             speech_language: SpeechLanguage::Auto,
+            speech_model: SpeechModel::Auto,
             interview_system_audio: true,
             interview_microphone: false,
             hide_main_from_capture: true,
@@ -116,6 +131,23 @@ mod tests {
     }
 
     #[test]
+    fn the_speech_model_is_chosen_automatically_until_the_user_picks_one() {
+        assert_eq!(AppSettings::default().speech_model, SpeechModel::Auto);
+        let old: AppSettings = serde_json::from_str(r#"{"speech_language":"english"}"#).unwrap();
+        assert_eq!(old.speech_model, SpeechModel::Auto);
+        for (name, model) in [
+            ("auto", SpeechModel::Auto),
+            ("small", SpeechModel::Small),
+            ("base", SpeechModel::Base),
+        ] {
+            let json = format!("\"{name}\"");
+            assert_eq!(serde_json::from_str::<SpeechModel>(&json).unwrap(), model);
+            assert_eq!(serde_json::to_string(&model).unwrap(), json);
+        }
+        assert!(serde_json::from_str::<SpeechModel>("\"large\"").is_err());
+    }
+
+    #[test]
     fn an_empty_object_is_the_defaults() {
         let s: AppSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(s, AppSettings::default());
@@ -125,6 +157,7 @@ mod tests {
     fn serde_round_trip() {
         let s = AppSettings {
             speech_language: SpeechLanguage::English,
+            speech_model: SpeechModel::Base,
             interview_system_audio: false,
             interview_microphone: true,
             hide_main_from_capture: false,

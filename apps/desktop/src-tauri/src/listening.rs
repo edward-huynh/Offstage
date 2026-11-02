@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex, TryLockError};
 
 use offstage_audio::{capture::CpalSource, AudioError, AudioSource};
-use offstage_core::{AppEvent, Speaker};
+use offstage_core::{settings::SpeechModel, AppEvent, Speaker};
 use offstage_models::{CancellationToken, Downloader, ModelSpec, Progress};
 use offstage_pipeline::{EventSink, LaneStatus, Pipeline, PipelineConfig, PipelineError};
 use offstage_stt::{Language, SpeechToText, WhisperConfig, WhisperStt};
@@ -52,8 +52,22 @@ pub(crate) fn emit(app: &AppHandle, event: &AppEvent) {
     let _ = app.emit(event.name(), event);
 }
 
-fn model_spec() -> ModelSpec {
-    offstage_models::whisper_small_q5()
+/// The speech model for a choice in the settings and the memory of the computer.
+fn speech_spec(choice: SpeechModel, ram_bytes: u64) -> ModelSpec {
+    match choice {
+        SpeechModel::Auto => offstage_models::recommended_speech(ram_bytes),
+        SpeechModel::Small => offstage_models::whisper_small_q5(),
+        SpeechModel::Base => offstage_models::whisper_base_q5(),
+    }
+}
+
+/// The speech model in use now: the setting, read each time, so a change applies to the next
+/// download or listening session.
+fn model_spec(app: &AppHandle) -> Result<ModelSpec, String> {
+    Ok(speech_spec(
+        crate::settings::load(app)?.speech_model,
+        crate::hardware::total_ram(),
+    ))
 }
 
 fn models_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -65,7 +79,7 @@ fn models_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 
 #[tauri::command]
 pub fn model_info(app: AppHandle) -> Result<ModelInfo, String> {
-    let spec = model_spec();
+    let spec = model_spec(&app)?;
     let path = spec.path_in(&models_dir(&app)?);
     // The size check is cheap. The full checksum is verified when the model is downloaded.
     let installed = std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == spec.size);
@@ -76,7 +90,7 @@ pub fn model_info(app: AppHandle) -> Result<ModelInfo, String> {
 /// `model_progress` events. Resolves when the file is complete and its checksum matches.
 #[tauri::command]
 pub async fn download_model(app: AppHandle, state: State<'_, Listening>) -> Result<(), String> {
-    let spec = model_spec();
+    let spec = model_spec(&app)?;
     let dir = models_dir(&app)?;
     let cancel = CancellationToken::new();
     {
@@ -126,7 +140,7 @@ pub fn cancel_download(state: State<Listening>) {
 }
 
 fn load_engine(app: &AppHandle) -> Result<Arc<dyn SpeechToText>, String> {
-    let path = model_spec().path_in(&models_dir(app)?);
+    let path = model_spec(app)?.path_in(&models_dir(app)?);
     if !path.is_file() {
         return Err(MODEL_MISSING.to_owned());
     }
@@ -305,6 +319,28 @@ pub fn pipeline_status(state: State<Listening>) -> ListeningStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_speech_model_follows_the_choice_and_automatic_follows_the_memory() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        assert_eq!(
+            speech_spec(SpeechModel::Small, 2 * GIB).id,
+            "whisper-small-q5_1"
+        );
+        assert_eq!(
+            speech_spec(SpeechModel::Base, 64 * GIB).id,
+            "whisper-base-q5_1"
+        );
+        assert_eq!(
+            speech_spec(SpeechModel::Auto, 16 * GIB).id,
+            "whisper-small-q5_1"
+        );
+        assert_eq!(
+            speech_spec(SpeechModel::Auto, 4 * GIB).id,
+            "whisper-base-q5_1"
+        );
+        assert_eq!(speech_spec(SpeechModel::Auto, 0).id, "whisper-small-q5_1");
+    }
 
     #[test]
     fn a_refused_permission_becomes_a_code_naming_the_source() {

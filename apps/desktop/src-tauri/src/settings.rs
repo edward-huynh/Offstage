@@ -1,8 +1,7 @@
 //! App settings: speech language, interview sources and screen-share hiding.
 //! Stored in the local database, under their own key.
 
-use offstage_core::{settings::AppSettings, HotkeyAction};
-use serde::Serialize;
+use offstage_core::settings::AppSettings;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{play::MAIN, storage};
@@ -45,22 +44,4 @@ pub fn update_settings(app: AppHandle, settings: AppSettings) -> Result<AppSetti
     // A failed emit means the window is gone, so there is nobody to tell.
     let _ = app.emit(CHANGED_EVENT, settings);
     Ok(settings)
-}
-
-#[derive(Serialize)]
-pub struct HotkeyBinding {
-    action: HotkeyAction,
-    accelerator: &'static str,
-}
-
-/// Every global shortcut with its default key combination, for the Settings screen.
-#[tauri::command]
-pub fn hotkey_bindings() -> Vec<HotkeyBinding> {
-    HotkeyAction::ALL
-        .iter()
-        .map(|&action| HotkeyBinding {
-            action,
-            accelerator: action.default_accelerator(),
-        })
-        .collect()
 }

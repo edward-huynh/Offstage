@@ -28,7 +28,7 @@ Mục **Content** là nơi viết kịch bản. Ngắt đoạn bằng một dòn
 | Home | Về đầu |
 | Esc | Dừng |
 
-Phím tắt toàn cục hoạt động cả khi Offstage không ở phía trước: `Ctrl/⌘+Alt+Space` chạy/dừng, `Ctrl/⌘+Alt+↑/↓` tốc độ, `Ctrl/⌘+Alt+O` ẩn/hiện, `Ctrl/⌘+Alt+T` chuột xuyên qua.
+Phím tắt toàn cục hoạt động cả khi Offstage không ở phía trước: `Ctrl/⌘+Alt+Space` chạy/dừng, `Ctrl/⌘+Alt+↑/↓` tốc độ, `Ctrl/⌘+Alt+O` ẩn/hiện, `Ctrl/⌘+Alt+T` chuột xuyên qua. Đổi ở Cài đặt, Hệ thống, Phím tắt: bấm **Đổi** rồi nhấn tổ hợp mới (cần có Ctrl, Alt hoặc ⌘; không trùng phím khác; **Mặc định** đặt lại).
 
 ## Nghe cuộc gọi (Interview)
 
@@ -49,7 +49,7 @@ Khi đối phương hỏi, trợ lý hiện vài gạch đầu dòng ngay trên 
 
 ## Tài liệu (Knowledge)
 
-Thêm CV, mô tả công việc, tiêu chí đánh giá hay ghi chú: tệp `.pdf`, `.docx`, `.md`, `.txt` (tối đa 20 MB), hoặc tự gõ. Offstage đọc chữ ngay trên máy và lập chỉ mục để tìm đoạn liên quan. Mỗi tài liệu hiện trạng thái: "AI đã đọc", hoặc "Không đọc được" kèm lý do (ví dụ PDF quét từ ảnh không có chữ).
+Thêm CV, mô tả công việc, tiêu chí đánh giá hay ghi chú: tệp `.pdf`, `.docx`, `.md`, `.txt` (tối đa 20 MB), bằng nút **Thêm tệp** hoặc **kéo thả tệp vào cửa sổ**, hoặc tự gõ. Offstage đọc chữ ngay trên máy và lập chỉ mục để tìm đoạn liên quan. Mỗi tài liệu hiện trạng thái: "AI đã đọc", hoặc "Không đọc được" kèm lý do (ví dụ PDF quét từ ảnh không có chữ).
 
 - **Tìm theo nghĩa** (tuỳ chọn): tải một mô hình nhỏ (khoảng 135 MB) để tìm được đoạn liên quan cả khi câu hỏi không dùng đúng từ của tài liệu, kể cả khác ngôn ngữ. Chưa tải thì vẫn tìm theo từ.
 - Khi tìm không ra đoạn nào mà tài liệu còn ngắn (một CV và một mô tả công việc), Offstage gửi cả tài liệu.
